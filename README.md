@@ -226,11 +226,52 @@ Every question records `source`, `source_url` and `source_licence`. Keep those
 populated on bulk imports; it is the only way to answer a licensing question
 later without guesswork.
 
+## Two lanes
+
+**Focus** is the study tool: untimed, explanations on every answer, spaced
+repetition, and a whole question set fetched up front so a dropped connection
+mid-session costs nothing.
+
+**Arcade** puts something at stake. Same questions, same XP economy, different
+contract with the player — and its own palette, because crossing between them
+should feel like walking into a different room.
+
+| Mode | Rules | Scored on |
+|---|---|---|
+| **Ladder** | Ten rungs, each worth more. After every correct answer: bank, or risk it all on the next one. | XP banked |
+| **Survival** | Three lives, difficulty escalating, runs until you die. | Questions survived |
+| **Blitz** | Sixty seconds. | Correct answers |
+
+Ladder is the one worth understanding, because it is the only mode where
+`submit_answer` awards nothing. Its `defer_xp` rule keeps every point riding on
+the run; `bank_ladder()` is the sole path by which any of it reaches a profile.
+A bust therefore genuinely pays zero — and if that ever quietly stops being
+true, the mode has no point, which is why three separate tests assert it.
+
+Arcade streams questions one at a time through `next_question()` rather than
+picking a set up front. Survival has no length to pick, and streaming is also
+what lets the server choose each question knowing how the run is going.
+`session_questions` still gates every answer, so the anti-replay guarantee is
+unchanged.
+
+Mode parameters — lives, durations, the rung payout curve — live in the
+`game_modes` table rather than in code, because those are the numbers that get
+tuned constantly once real people play. Behaviour is code; the numbers are rows.
+
 ## Next
 
 1. **Admin panel** (Next.js on Vercel) — editor, approval queue, CSV import,
    reports inbox. The team is the launch bottleneck, so this unblocks more than
-   any app feature does.
+   any app feature does — and Arcade has made that worse, not better. Survival
+   is endless but the bank is 120 questions, so a good run empties a category
+   in one sitting, after which the `first_time` multiplier drops payouts to 30%
+   and the game reads as having stopped rewarding you.
+2. **New question formats** — Order the Code (Parsons), Spot the Bug, Match
+   Pairs, Fill the Blank, Chart Reader. The renderer in
+   `src/components/questions/` dispatches on `question.kind` and
+   `questions.payload` is already there to hold them, so each is a new file and
+   one line in a switch. They are blocked on the admin panel, not on the app:
+   nobody is hand-writing a Parsons problem into a CSV.
 2. Push notifications for the streak reminder.
 3. Daily challenge generation (a cron that fills `daily_challenges`).
 4. Weekly league rollover (promotion/relegation cron).

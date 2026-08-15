@@ -116,6 +116,14 @@ export default function RootLayout() {
                   options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
                 />
                 <Stack.Screen name="quiz/results" options={{ gestureEnabled: false }} />
+                <Stack.Screen name="arcade/index" />
+                {/* No swipe-back mid-run: a run has stakes, and losing one to
+                    an accidental edge gesture is the worst way to lose it. */}
+                <Stack.Screen
+                  name="arcade/[mode]"
+                  options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
+                />
+                <Stack.Screen name="arcade/results" options={{ gestureEnabled: false }} />
               </Stack>
             </AuthGate>
           </AuthProvider>

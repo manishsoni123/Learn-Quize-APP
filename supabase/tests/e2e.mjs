@@ -303,6 +303,135 @@ console.log('\nprogress and boundaries');
   check('a user cannot author questions', !write.ok, `status ${write.status}`);
 }
 
+// ------------------------------------------------------------------ arcade
+
+console.log('\narcade');
+{
+  const modes = await call('/rest/v1/game_modes?select=slug,name,rules&lane=eq.arcade&order=sort_order', { token });
+  check('arcade modes are readable', modes.ok && modes.body?.length === 3, modes.raw.slice(0, 200));
+
+  const ladderRules = (modes.body || []).find((m) => m.slug === 'ladder')?.rules;
+  check('ladder ships a rung curve', Array.isArray(ladderRules?.rungs) && ladderRules.rungs.length === 10);
+
+  // ---- ladder: climb three rungs, then bank
+  const started = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id }, token);
+  check('start_arcade_run', started.ok && typeof started.body === 'string', started.raw.slice(0, 200));
+  const run = started.body;
+
+  const before = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
+  const xpBefore = before.body?.[0]?.xp ?? 0;
+
+  const served = new Set();
+  let lastState = null;
+
+  for (let i = 1; i <= 3; i++) {
+    const q = await rpc('next_question', { p_session_id: run }, token);
+    if (!q.ok || !q.body) {
+      check(`next_question #${i}`, false, q.raw.slice(0, 200));
+      break;
+    }
+    check(`next_question #${i} carries options`, (q.body.options?.length ?? 0) >= 2);
+    check(`next_question #${i} is a fresh question`, !served.has(q.body.id));
+    served.add(q.body.id);
+
+    const right = q.body.options.find((o) => o.is_correct);
+    const res = await rpc(
+      'submit_answer',
+      { p_session_id: run, p_question_id: q.body.id, p_option_id: right.id, p_time_ms: 3000 },
+      token,
+    );
+    if (!res.ok) {
+      check(`ladder answer #${i}`, false, res.raw.slice(0, 200));
+      break;
+    }
+    lastState = res.body?.[0]?.run_state;
+
+    // The mechanic depends on this: nothing is earned per answer, it is only
+    // ever riding on the run.
+    check(`ladder answer #${i} pays nothing up front`, res.body?.[0]?.xp_awarded === 0, `got ${res.body?.[0]?.xp_awarded}`);
+    check(`ladder answer #${i} climbed to rung ${i}`, lastState?.rung === i, `rung ${lastState?.rung}`);
+  }
+
+  const during = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
+  check('ladder credits nothing before banking', during.body?.[0]?.xp === xpBefore, `${during.body?.[0]?.xp} vs ${xpBefore}`);
+
+  const banked = await rpc('bank_ladder', { p_session_id: run }, token);
+  check('bank_ladder', banked.ok, banked.raw.slice(0, 200));
+  check('rung 3 banks exactly 40 by the seeded curve', banked.body?.[0]?.banked === 40, `got ${banked.body?.[0]?.banked}`);
+
+  const after = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
+  check('banked xp reached the profile', after.body?.[0]?.xp === xpBefore + 40, `${after.body?.[0]?.xp} vs ${xpBefore + 40}`);
+
+  const done = await rpc('finish_quiz_session', { p_session_id: run }, token);
+  check('finishing a run reports what it scored', done.body?.[0]?.run?.value === 40, JSON.stringify(done.body?.[0]?.run));
+  check('a first run is a personal best', done.body?.[0]?.run?.is_record === true);
+
+  // ---- ladder: bust
+  const bust = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id }, token);
+  const bustRun = bust.body;
+  const bustBefore = (await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token })).body?.[0]?.xp;
+
+  const q1 = await rpc('next_question', { p_session_id: bustRun }, token);
+  await rpc('submit_answer', {
+    p_session_id: bustRun, p_question_id: q1.body.id,
+    p_option_id: q1.body.options.find((o) => o.is_correct).id, p_time_ms: 3000,
+  }, token);
+
+  const q2 = await rpc('next_question', { p_session_id: bustRun }, token);
+  const missed = await rpc('submit_answer', {
+    p_session_id: bustRun, p_question_id: q2.body.id,
+    p_option_id: q2.body.options.find((o) => !o.is_correct).id, p_time_ms: 3000,
+  }, token);
+
+  check('a wrong answer ends the ladder', missed.body?.[0]?.run_state?.run_over === true);
+  check('a bust leaves nothing riding', missed.body?.[0]?.run_state?.unbanked === 0);
+
+  await rpc('bank_ladder', { p_session_id: bustRun }, token);
+  const bustAfter = (await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token })).body?.[0]?.xp;
+  check('a busted ladder pays nothing, even if banked', bustAfter === bustBefore, `${bustAfter} vs ${bustBefore}`);
+  await rpc('finish_quiz_session', { p_session_id: bustRun }, token);
+
+  // ---- survival: three lives
+  const surv = await rpc('start_arcade_run', { p_mode_slug: 'survival', p_category_id: category.id }, token);
+  check('start survival', surv.ok, surv.raw.slice(0, 200));
+
+  for (let i = 1; i <= 3; i++) {
+    const q = await rpc('next_question', { p_session_id: surv.body }, token);
+    const wrong = q.body.options.find((o) => !o.is_correct);
+    const res = await rpc('submit_answer', {
+      p_session_id: surv.body, p_question_id: q.body.id,
+      p_option_id: wrong.id, p_time_ms: 3000,
+    }, token);
+    check(`survival: ${3 - i} lives left after ${i} misses`, res.body?.[0]?.run_state?.lives === 3 - i, `got ${res.body?.[0]?.run_state?.lives}`);
+    check(`survival run_over is ${i === 3} after ${i} misses`, res.body?.[0]?.run_state?.run_over === (i === 3));
+  }
+  await rpc('finish_quiz_session', { p_session_id: surv.body }, token);
+
+  // ---- boundaries
+  const anonRun = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id });
+  check('anon cannot start a run', !anonRun.ok, `status ${anonRun.status}`);
+
+  const fakeMode = await rpc('start_arcade_run', { p_mode_slug: 'not_a_mode', p_category_id: category.id }, token);
+  check('an unknown mode is refused', !fakeMode.ok, `status ${fakeMode.status}`);
+
+  const cheatRecord = await call('/rest/v1/mode_records', {
+    method: 'POST', token,
+    body: { user_id: userId, mode_slug: 'survival', week_start: '2026-08-10', best_value: 999999 },
+  });
+  check('a user cannot write a leaderboard row', !cheatRecord.ok, `status ${cheatRecord.status}`);
+
+  const cheatState = await call(`/rest/v1/quiz_sessions?id=eq.${surv.body}`, {
+    method: 'PATCH', token, body: { state: { lives: 99 } },
+  });
+  check('a user cannot write run state', !cheatState.ok, `status ${cheatState.status}`);
+
+  const internal = await rpc('apply_mode_rules', { p_session_id: surv.body, p_correct: true }, token);
+  check('apply_mode_rules is not callable', !internal.ok, `status ${internal.status}`);
+
+  const board = await call('/rest/v1/mode_records?select=mode_slug,best_value&order=best_value.desc&limit=5', { token });
+  check('the board is readable', board.ok && board.body?.length > 0, board.raw.slice(0, 160));
+}
+
 report();
 
 function report() {

@@ -2,31 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { supabase } from '../lib/supabase';
 import type {
-  Difficulty,
   FinishSessionResult,
-  QuestionKind,
+  PlayableOption,
+  PlayableQuestion,
   QuizMode,
   SubmitAnswerResult,
 } from '../lib/database.types';
 
-export interface PlayableOption {
-  id: string;
-  body: string;
-  is_correct: boolean;
-  sort_order: number;
-}
-
-export interface PlayableQuestion {
-  id: string;
-  position: number;
-  body: string;
-  code_snippet: string | null;
-  code_language: string | null;
-  difficulty: Difficulty;
-  kind: QuestionKind;
-  explanation: string;
-  options: PlayableOption[];
-}
+// These moved to lib/database.types so the Arcade lane can produce the same
+// shape from next_question(). Re-exported because the Focus player and its
+// components already import them from here.
+export type { PlayableOption, PlayableQuestion };
 
 export interface PlayableSession {
   id: string;
@@ -124,12 +110,15 @@ export function useSubmitAnswer() {
       questionId: string;
       optionId: string | null;
       timeMs: number;
+      /** Formats that are not a single choice. Null for everything today. */
+      payload?: Record<string, unknown> | null;
     }): Promise<SubmitAnswerResult> => {
       const { data, error } = await supabase.rpc('submit_answer', {
         p_session_id: input.sessionId,
         p_question_id: input.questionId,
         p_option_id: input.optionId,
         p_time_ms: Math.max(0, Math.round(input.timeMs)),
+        p_response: input.payload ?? null,
       });
       if (error) throw error;
 

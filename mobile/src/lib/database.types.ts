@@ -106,12 +106,73 @@ export interface Achievement {
   sort_order: number;
 }
 
+/**
+ * A question ready to be played, with its options.
+ *
+ * Both lanes produce this shape and hand it to the same renderer, but they
+ * build it differently: Focus assembles it client-side from one embedded
+ * select at session start, Arcade receives it from next_question() one at a
+ * time. Keeping the shape identical is what lets a Parsons problem drop into
+ * a Survival run later without touching either player.
+ */
+export interface PlayableOption {
+  id: string;
+  body: string;
+  is_correct: boolean;
+  sort_order: number;
+}
+
+export interface PlayableQuestion {
+  id: string;
+  position: number;
+  body: string;
+  code_snippet: string | null;
+  code_language: string | null;
+  difficulty: Difficulty;
+  kind: QuestionKind;
+  explanation: string;
+  options: PlayableOption[];
+}
+
+/**
+ * What the player did, in a form submit_answer() understands.
+ *
+ * `optionId` covers every format that exists today. `payload` is the seat for
+ * the ones that cannot be reduced to a single choice — the ordering of a
+ * Parsons problem, the pairs of a matching grid — and maps straight onto the
+ * function's p_response argument.
+ */
+export interface AnswerResponse {
+  optionId: string | null;
+  payload?: Record<string, unknown> | null;
+}
+
+/** Run state carried by an arcade session. Null for a Focus quiz. */
+export interface RunState {
+  slug?: string;
+  run?: number;
+  lives?: number;
+  rung?: number;
+  unbanked?: number;
+  banked?: number;
+  run_over?: boolean;
+}
+
 /** Return shape of public.submit_answer(). */
 export interface SubmitAnswerResult {
   is_correct: boolean;
   correct_option_id: string | null;
   xp_awarded: number;
   explanation: string;
+  run_state: RunState | null;
+}
+
+/** What a finished arcade run scored, and whether it beat anything. */
+export interface RunSummary {
+  slug: string;
+  value: number;
+  best: number;
+  is_record: boolean;
 }
 
 /** Return shape of public.finish_quiz_session(). */
@@ -123,4 +184,32 @@ export interface FinishSessionResult {
   new_level: number;
   new_streak: number;
   unlocked: string[];
+  run: RunSummary | null;
+}
+
+/**
+ * Mode parameters. Readable by the client so it can draw the ladder and size
+ * the clock — never trusted for anything. The server re-reads the same row
+ * when it applies the rules, so editing these on the device changes what is
+ * drawn and nothing about what is scored.
+ */
+export interface GameModeRules {
+  rungs?: number[];
+  lives?: number;
+  duration_s?: number;
+  defer_xp?: boolean;
+}
+
+/** A row from public.game_modes. */
+export interface GameMode {
+  id: string;
+  slug: string;
+  name: string;
+  tagline: string;
+  lane: 'focus' | 'arcade';
+  rules: GameModeRules;
+  accent_hex: string;
+  icon: string | null;
+  min_level: number;
+  sort_order: number;
 }

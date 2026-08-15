@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCatalog } from '../../src/api/catalog';
@@ -17,6 +17,7 @@ import {
 } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { colors, radius, space, trackColor } from '../../src/theme';
+import { arcade } from '../../src/theme/arcade';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -106,7 +107,14 @@ export default function HomeScreen() {
           <XpBar xp={me?.xp ?? 0} />
         </Card>
 
-        {/* ------------------------------------------------------ quick start */}
+        {/* ----------------------------------------------------------- lanes */}
+        {/*
+          Two doors, not a mode dropdown. They are different promises: Focus is
+          untimed and forgiving and will let you sit on a question, Arcade puts
+          something at stake and takes it back if you get it wrong. Presenting
+          that as a setting inside one flow would hide the choice that matters
+          most, which is what kind of session someone is in the mood for.
+        */}
         <Spacer h={space.lg} />
         <View style={styles.quickRow}>
           <QuickAction
@@ -129,6 +137,25 @@ export default function HomeScreen() {
             onPress={() => void startQuickSession('weak_spots', 10)}
           />
         </View>
+
+        <Spacer h={space.md} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open Arcade"
+          onPress={() => router.push('/arcade')}
+          style={({ pressed }) => [styles.arcade, pressed && { opacity: 0.85 }]}
+        >
+          <View style={styles.flex}>
+            <Text style={styles.arcadeKicker}>ARCADE</Text>
+            <Spacer h={space.xs} />
+            <Txt variant="bodyStrong">Play for it</Txt>
+            <Spacer h={space.xs} />
+            <Txt variant="caption" tone="faint">
+              Ladder, Survival and Blitz — same questions, real stakes
+            </Txt>
+          </View>
+          <Text style={styles.arcadeGlyph}>🕹️</Text>
+        </Pressable>
 
         {/* ----------------------------------------------------------- tracks */}
         {catalog.data?.map((track) => (
@@ -223,6 +250,26 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
 
   quickRow: { flexDirection: 'row', gap: space.md },
+
+  // Borrows the Arcade palette rather than the Focus one — the card is a door
+  // into another room and should look like it from this side.
+  arcade: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: arcade.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: arcade.energy,
+    padding: space.lg,
+  },
+  arcadeKicker: {
+    color: arcade.energy,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.6,
+  },
+  arcadeGlyph: { fontSize: 30 },
   quick: {
     flex: 1,
     backgroundColor: colors.surface,
