@@ -246,6 +246,160 @@ begin
 end
 $$;
 
+-- ============================================================ arcade
+
+do $$
+declare
+  v_alice uuid := '11111111-1111-1111-1111-111111111111';
+  v_cat   uuid := (select id from public.categories where slug = 'javascript');
+  v_run   uuid;
+  v_q     jsonb;
+  v_qid   uuid;
+  v_opt   uuid;
+  v_row   record;
+  v_xp0   integer;
+  v_xp1   integer;
+  v_seen  uuid[] := '{}';
+  v_count integer;
+  ok      boolean;
+  i       integer;
+begin
+  perform set_config('request.jwt.claim.sub', v_alice::text, true);
+
+  -- ---- ladder: climb three rungs, then bank -----------------------------
+  v_run := public.start_arcade_run('ladder', v_cat);
+  select xp into v_xp0 from public.profiles where id = v_alice;
+
+  for i in 1..3 loop
+    v_q := public.next_question(v_run);
+    assert v_q is not null, format('ladder ran dry at rung %s', i);
+    v_qid := (v_q ->> 'id')::uuid;
+
+    assert not (v_qid = any(v_seen)),
+      'next_question served the same question twice in one run';
+    v_seen := v_seen || v_qid;
+
+    assert jsonb_array_length(v_q -> 'options') >= 2,
+      'next_question returned a question with no options';
+
+    select o.id into v_opt
+    from public.options o where o.question_id = v_qid and o.is_correct;
+
+    select * into v_row from public.submit_answer(v_run, v_qid, v_opt, 4000);
+
+    assert v_row.is_correct, 'ladder scored a correct option as wrong';
+    -- The mechanic depends on this: nothing is earned per answer, it is only
+    -- ever riding on the run.
+    assert v_row.xp_awarded = 0,
+      format('ladder paid %s xp per answer; it must pay only on bank', v_row.xp_awarded);
+    assert (v_row.run_state ->> 'rung')::integer = i,
+      format('expected rung %s, state says %s', i, v_row.run_state ->> 'rung');
+    assert not (v_row.run_state ->> 'run_over')::boolean,
+      'ladder ended the run on a correct answer';
+  end loop;
+
+  select xp into v_xp1 from public.profiles where id = v_alice;
+  assert v_xp1 = v_xp0, 'ladder credited xp to the profile before it was banked';
+
+  select * into v_row from public.bank_ladder(v_run);
+  assert v_row.banked = 40,
+    format('rung 3 pays 40 by the seeded curve, banked %s', v_row.banked);
+
+  select xp into v_xp1 from public.profiles where id = v_alice;
+  assert v_xp1 = v_xp0 + 40,
+    format('banked xp did not reach the profile: %s vs %s', v_xp1, v_xp0 + 40);
+
+  select * into v_row from public.finish_quiz_session(v_run);
+  assert (v_row.run -> 'is_record')::boolean, 'first ladder run was not a personal best';
+  assert (v_row.run ->> 'value')::integer = 40, 'ladder run recorded the wrong value';
+
+  -- ---- ladder: climb, then bust ------------------------------------------
+  v_run  := public.start_arcade_run('ladder', v_cat);
+  v_seen := '{}';
+  select xp into v_xp0 from public.profiles where id = v_alice;
+
+  v_q   := public.next_question(v_run);
+  v_qid := (v_q ->> 'id')::uuid;
+  select o.id into v_opt from public.options o
+  where o.question_id = v_qid and o.is_correct;
+  perform * from public.submit_answer(v_run, v_qid, v_opt, 4000);
+
+  v_q   := public.next_question(v_run);
+  v_qid := (v_q ->> 'id')::uuid;
+  select o.id into v_opt from public.options o
+  where o.question_id = v_qid and not o.is_correct limit 1;
+
+  select * into v_row from public.submit_answer(v_run, v_qid, v_opt, 4000);
+  assert (v_row.run_state ->> 'run_over')::boolean,
+    'a wrong answer did not end the ladder run';
+  assert (v_row.run_state ->> 'unbanked')::integer = 0,
+    'a bust left xp still riding on the run';
+
+  select xp into v_xp1 from public.profiles where id = v_alice;
+  assert v_xp1 = v_xp0, format('a busted ladder paid out %s xp', v_xp1 - v_xp0);
+
+  ok := false;
+  begin
+    perform * from public.bank_ladder(v_run);
+    select xp into v_xp1 from public.profiles where id = v_alice;
+    ok := v_xp1 = v_xp0;      -- banking a bust must pay nothing
+  exception when others then ok := true;
+  end;
+  assert ok, 'banking after a bust paid out';
+
+  perform * from public.finish_quiz_session(v_run);
+
+  -- ---- survival: three lives, three wrong answers ------------------------
+  v_run := public.start_arcade_run('survival', v_cat);
+
+  for i in 1..3 loop
+    v_q   := public.next_question(v_run);
+    assert v_q is not null, format('survival ran dry at question %s', i);
+    v_qid := (v_q ->> 'id')::uuid;
+
+    select o.id into v_opt from public.options o
+    where o.question_id = v_qid and not o.is_correct limit 1;
+
+    select * into v_row from public.submit_answer(v_run, v_qid, v_opt, 4000);
+
+    assert (v_row.run_state ->> 'lives')::integer = 3 - i,
+      format('after %s wrong answers expected %s lives, state says %s',
+             i, 3 - i, v_row.run_state ->> 'lives');
+    assert (v_row.run_state ->> 'run_over')::boolean = (i = 3),
+      format('survival run_over was wrong after %s misses', i);
+  end loop;
+
+  perform * from public.finish_quiz_session(v_run);
+
+  -- ---- a run that is not yours is not playable ---------------------------
+  perform set_config('request.jwt.claim.sub',
+                     '22222222-2222-2222-2222-222222222222', true);
+  ok := false;
+  begin
+    perform public.next_question(v_run);
+  exception when insufficient_privilege then ok := true;
+       when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'another user could pull a question from someone else''s run';
+
+  perform set_config('request.jwt.claim.sub', v_alice::text, true);
+
+  -- ---- an unknown or locked mode cannot be started -----------------------
+  ok := false;
+  begin
+    perform public.start_arcade_run('not_a_mode', v_cat);
+  exception when others then ok := (sqlstate = 'P0002');
+  end;
+  assert ok, 'start_arcade_run accepted a mode that does not exist';
+
+  select count(*) into v_count from public.mode_records where user_id = v_alice;
+  assert v_count = 2,
+    format('expected ladder and survival records, found %s', v_count);
+
+  raise notice 'arcade OK — ladder banks and busts, survival lives, streamed questions';
+end
+$$;
+
 -- ============================================================ security
 
 -- Everything below runs as an ordinary signed-in user, not the owner.
@@ -283,6 +437,39 @@ begin
   exception when insufficient_privilege then ok := true;
   end;
   assert ok, 'a user was able to write directly to profiles.current_streak';
+
+  -- Run state is the arcade equivalent of profiles.xp: whoever can write it
+  -- has infinite lives and a full ladder.
+  ok := false;
+  begin
+    update public.quiz_sessions set state = '{"lives": 99}'::jsonb;
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'a user was able to write quiz_sessions.state';
+
+  ok := false;
+  begin
+    insert into public.mode_records (user_id, mode_slug, week_start, best_value)
+    values (auth.uid(), 'survival', current_date, 999999);
+  exception when insufficient_privilege then ok := true;
+       when others then ok := true;
+  end;
+  assert ok, 'a user was able to write themselves onto a leaderboard';
+
+  -- The functions that decide the rules must not be reachable over the API.
+  ok := false;
+  begin
+    perform public.apply_mode_rules(gen_random_uuid(), true);
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'apply_mode_rules is callable from a client';
+
+  ok := false;
+  begin
+    perform public.record_run(gen_random_uuid());
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'record_run is callable from a client';
 
   -- Editing your own display name is fine.
   update public.profiles set username = 'bob_test' where id = auth.uid();
