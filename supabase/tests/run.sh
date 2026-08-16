@@ -72,5 +72,5 @@ echo "smoke test"
 run supabase/tests/01_smoke_test.sql
 
 echo
-echo "PASS — schema, seed bank, game loop, arcade rules and security boundary verified"
+echo "PASS — schema, seed bank, game loop, arcade, ludo and security boundary verified"
 docker rm -f "$CONTAINER" >/dev/null

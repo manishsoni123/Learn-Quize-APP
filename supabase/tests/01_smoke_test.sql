@@ -400,6 +400,204 @@ begin
 end
 $$;
 
+-- ============================================================ ludo
+
+-- The rules are tested against hand-built boards rather than by playing, so
+-- each assertion pins exactly one rule. Playing a whole match is the e2e
+-- suite's job; this is where "a six is required to leave the yard" is proved.
+do $$
+declare
+  v_board jsonb;
+  v_moves jsonb;
+  v_res   jsonb;
+  ok      boolean;
+begin
+  -- A board where seat 0 has one token out on relative 10 and three in the
+  -- yard, and seat 1 has a token sitting on the same absolute square.
+  v_board := jsonb_build_object(
+    'slug', 'ludo', 'turn', 0, 'pending_roll', null, 'sixes', 0, 'winner', null,
+    'players', jsonb_build_array(
+      jsonb_build_object('seat', 0, 'kind', 'human', 'tokens', jsonb_build_array(10, -1, -1, -1)),
+      jsonb_build_object('seat', 1, 'kind', 'bot', 'accuracy', 0.7,
+                         'tokens', jsonb_build_array(-1, -1, -1, -1)),
+      jsonb_build_object('seat', 2, 'kind', 'bot', 'accuracy', 0.7,
+                         'tokens', jsonb_build_array(-1, -1, -1, -1)),
+      jsonb_build_object('seat', 3, 'kind', 'bot', 'accuracy', 0.7,
+                         'tokens', jsonb_build_array(-1, -1, -1, -1))
+    )
+  );
+
+  -- ---- geometry ----------------------------------------------------------
+  assert public.ludo_abs(0, 0) = 0,   'seat 0 must enter at absolute 0';
+  assert public.ludo_abs(1, 0) = 13,  'seat 1 must enter at absolute 13';
+  assert public.ludo_abs(3, 20) = 7,  'the track must wrap: 39 + 20 = 7 mod 52';
+  assert public.ludo_abs(0, 55) = -1, 'a token in the home column is off the track';
+  assert public.ludo_is_safe(8),      'square 8 is a star and must be safe';
+  assert not public.ludo_is_safe(9),  'square 9 is ordinary and must not be safe';
+
+  -- ---- a six is the only way out -----------------------------------------
+  v_moves := public.ludo_legal_moves(v_board, 0, 3);
+  assert jsonb_array_length(v_moves) = 1,
+    format('only the token already out may move on a 3, got %s moves',
+           jsonb_array_length(v_moves));
+
+  v_moves := public.ludo_legal_moves(v_board, 0, 6);
+  assert jsonb_array_length(v_moves) = 4,
+    format('a six should free three yard tokens plus the one out, got %s',
+           jsonb_array_length(v_moves));
+
+  -- ---- home must be hit exactly -------------------------------------------
+  v_board := jsonb_set(v_board, '{players,0,tokens,0}', to_jsonb(55));
+  v_moves := public.ludo_legal_moves(v_board, 0, 2);
+  assert jsonb_array_length(v_moves) = 1, 'a token on 55 must be able to reach 57 with a 2';
+
+  v_moves := public.ludo_legal_moves(v_board, 0, 4);
+  assert jsonb_array_length(v_moves) = 0,
+    'a token on 55 must not be able to overshoot home with a 4';
+
+  -- ---- capture ------------------------------------------------------------
+  -- Seat 0 lands on relative 10 (absolute 10); seat 1 sits on relative 49,
+  -- which is absolute (13 + 49) % 52 = 10. Not a safe square, so it goes home.
+  v_board := jsonb_set(v_board, '{players,0,tokens,0}', to_jsonb(7));
+  v_board := jsonb_set(v_board, '{players,1,tokens,0}', to_jsonb(49));
+  assert public.ludo_abs(1, 49) = 10, 'test board is wrong: seat 1 is not on square 10';
+
+  v_res := public.ludo_apply_move(v_board, 0, 0, 3);
+  assert (v_res -> 'state' -> 'players' -> 1 -> 'tokens' ->> 0)::integer = -1,
+    'a captured token was not sent back to the yard';
+  assert (v_res ->> 'extra')::boolean, 'a capture must grant another turn';
+
+  -- ---- safe squares block capture -----------------------------------------
+  -- Seat 0 moving to relative 8 is absolute 8, a star. Seat 1 on relative 47
+  -- is also absolute 8, and must survive.
+  v_board := jsonb_set(v_board, '{players,0,tokens,0}', to_jsonb(5));
+  v_board := jsonb_set(v_board, '{players,1,tokens,0}', to_jsonb(47));
+  assert public.ludo_abs(1, 47) = 8, 'test board is wrong: seat 1 is not on square 8';
+
+  v_res := public.ludo_apply_move(v_board, 0, 0, 3);
+  assert (v_res -> 'state' -> 'players' -> 1 -> 'tokens' ->> 0)::integer = 47,
+    'a token on a safe square was captured';
+
+  -- ---- an illegal move is refused whatever the client says ----------------
+  ok := false;
+  begin
+    -- Token 1 is in the yard and 3 is not a six.
+    perform public.ludo_apply_move(v_board, 0, 1, 3);
+  exception when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'ludo_apply_move accepted a token that could not legally move';
+
+  -- ---- winning ------------------------------------------------------------
+  v_board := jsonb_set(v_board, '{players,0,tokens}', '[57, 57, 57, 55]'::jsonb);
+  v_res   := public.ludo_apply_move(v_board, 0, 3, 2);
+  assert (v_res -> 'state' ->> 'winner') = '0', 'the last token home did not win the match';
+  assert not (v_res ->> 'extra')::boolean, 'a won match must not grant another turn';
+
+  raise notice 'ludo OK — yard, exact home, capture, safe squares, illegal moves, winning';
+end
+$$;
+
+-- The full loop, played as a user: start, answer, roll, move, bots reply.
+do $$
+declare
+  v_alice uuid := '11111111-1111-1111-1111-111111111111';
+  v_match uuid;
+  v_q     jsonb;
+  v_qid   uuid;
+  v_opt   uuid;
+  v_row   record;
+  v_state jsonb;
+  v_res   jsonb;
+  v_count integer;
+  ok      boolean;
+begin
+  perform set_config('request.jwt.claim.sub', v_alice::text, true);
+
+  -- Only 8 questions are approved in this harness, well under the 30 a match
+  -- needs — so the refusal is the correct behaviour and is what gets asserted.
+  ok := false;
+  begin
+    perform public.start_ludo_match(null);
+  exception when others then ok := (sqlstate = 'P0002');
+  end;
+  assert ok, 'ludo started on a bank too small to finish a match';
+
+  -- Drop the bar for the rest of the test.
+  update public.game_modes
+     set rules = rules || jsonb_build_object('min_questions', 1)
+   where slug = 'ludo';
+
+  v_match := public.start_ludo_match(null);
+  assert v_match is not null, 'start_ludo_match returned nothing';
+
+  select state into v_state from public.quiz_sessions where id = v_match;
+  assert jsonb_array_length(v_state -> 'players') = 4, 'a match must seat four players';
+  assert v_state -> 'players' -> 0 ->> 'kind' = 'human', 'seat 0 must be the human';
+  -- `->>` on a JSON null yields SQL NULL, not the text 'null'.
+  assert v_state ->> 'pending_roll' is null, 'a match must start with no roll in hand';
+
+  assert public.active_ludo_match() = v_match, 'the new match was not reported as active';
+
+  -- ---- a correct answer earns a roll --------------------------------------
+  v_q   := public.next_question(v_match);
+  v_qid := (v_q ->> 'id')::uuid;
+  select o.id into v_opt from public.options o where o.question_id = v_qid and o.is_correct;
+
+  select * into v_row from public.submit_answer(v_match, v_qid, v_opt, 3000);
+  assert (v_row.run_state ->> 'pending_roll')::integer between 1 and 6,
+    format('a correct answer must earn a roll, state says %s',
+           v_row.run_state ->> 'pending_roll');
+
+  -- ---- a wrong answer earns nothing ---------------------------------------
+  perform public.ludo_move(v_match, null);          -- spend the roll by passing
+
+  v_q   := public.next_question(v_match);
+  v_qid := (v_q ->> 'id')::uuid;
+  select o.id into v_opt from public.options o
+  where o.question_id = v_qid and not o.is_correct limit 1;
+
+  select * into v_row from public.submit_answer(v_match, v_qid, v_opt, 3000);
+  assert v_row.run_state ->> 'pending_roll' is null,
+    'a wrong answer handed out a roll';
+
+  -- ---- moving without a roll is refused -----------------------------------
+  ok := false;
+  begin
+    perform public.ludo_move(v_match, 0);
+  exception when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'a token moved with no roll in hand';
+
+  -- ---- passing hands the turn to the bots, who play ------------------------
+  v_res := public.ludo_move(v_match, null);
+  assert jsonb_array_length(v_res -> 'log') > 0, 'the bots did not take their turns';
+  assert (v_res -> 'state' ->> 'turn')::integer = 0,
+    'control did not come back to the human';
+
+  -- ---- someone else's match is not playable --------------------------------
+  perform set_config('request.jwt.claim.sub',
+                     '22222222-2222-2222-2222-222222222222', true);
+  ok := false;
+  begin
+    perform public.ludo_move(v_match, null);
+  exception when insufficient_privilege then ok := true;
+       when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'another user could take a turn in someone else''s match';
+
+  perform set_config('request.jwt.claim.sub', v_alice::text, true);
+
+  -- ---- starting again abandons the old board -------------------------------
+  perform public.start_ludo_match(null);
+  select count(*) into v_count
+  from public.quiz_sessions
+  where user_id = v_alice and mode = 'ludo' and finished_at is null;
+  assert v_count = 1, format('expected exactly one live match, found %s', v_count);
+
+  raise notice 'ludo loop OK — answer earns a roll, bots reply, one live match, resume';
+end
+$$;
+
 -- ============================================================ security
 
 -- Everything below runs as an ordinary signed-in user, not the owner.
