@@ -124,6 +124,7 @@ export default function RootLayout() {
                   options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
                 />
                 <Stack.Screen name="arcade/results" options={{ gestureEnabled: false }} />
+                <Stack.Screen name="arcade/ludo" options={{ animation: 'slide_from_bottom' }} />
               </Stack>
             </AuthGate>
           </AuthProvider>

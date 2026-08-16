@@ -241,6 +241,30 @@ should feel like walking into a different room.
 | **Ladder** | Ten rungs, each worth more. After every correct answer: bank, or risk it all on the next one. | XP banked |
 | **Survival** | Three lives, difficulty escalating, runs until you die. | Questions survived |
 | **Blitz** | Sixty seconds. | Correct answers |
+| **Ludo** | The real board against three bots. Answer correctly to earn your roll. | Matches won |
+
+**Ludo** is real Ludo, not a quiz wearing a board: a six to leave the yard,
+another turn on a six with three in a row forfeiting, capture on unsafe
+squares, the four starts and four stars safe, home hit exactly, all four tokens
+home to win. Nobody needs teaching, which is the entire point.
+
+Token positions are stored **relative to each player's own start** — `-1` yard,
+`0–51` track, `52–56` home column, `57` home — so a move is `pos + roll` for
+every seat and the seat offset is applied in exactly one place: deciding
+whether two tokens share an absolute square. Absolute storage would push
+"whose turn is it" into every rule.
+
+The die is rolled inside `apply_mode_rules`, never on the phone. Bots simulate
+their answers rather than drawing questions — three bots taking a card each per
+turn would empty a category in one match — and all three seats resolve in a
+single `ludo_move` call, so a turn costs one round trip and returns a log to
+animate. `src/lib/ludoBoard.ts` mirrors the move rules so the board can light
+up tappable tokens, but it is advisory: `ludo_move` re-derives the legal set
+and refuses anything outside it.
+
+Matches run long, so they are **resumable** — the board lives in
+`quiz_sessions.state` and Arcade offers an unfinished one back rather than
+silently replacing it.
 
 Ladder is the one worth understanding, because it is the only mode where
 `submit_answer` awards nothing. Its `defer_xp` rule keeps every point riding on

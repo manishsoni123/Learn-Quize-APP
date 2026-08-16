@@ -282,10 +282,20 @@ console.log('\nprogress and boundaries');
   const internal = await rpc('add_league_xp', { p_user_id: userId, p_xp: 999999 }, token);
   check('internal helpers are not callable', !internal.ok, `status ${internal.status}`);
 
-  const league = await call('/rest/v1/league_members?select=xp_earned,final_rank&limit=5', { token });
+  // Filtered to this user's own row on purpose. The policy lets you read
+  // everyone in your room, and every previous run of this suite left a user
+  // behind in the same weekly bronze room — so an unfiltered query returns a
+  // row count that grows with the number of times anyone has run the tests.
+  const league = await call(
+    `/rest/v1/league_members?select=xp_earned,final_rank&user_id=eq.${userId}`,
+    { token },
+  );
   check('league standing is readable', league.ok, league.raw.slice(0, 160));
   check('the session put the player in a league room', league.body?.length === 1, `${league.body?.length} rows`);
   check('league xp tracks the session', league.body?.[0]?.xp_earned === summary.xp_earned, `${league.body?.[0]?.xp_earned} vs ${summary.xp_earned}`);
+
+  const room = await call('/rest/v1/league_members?select=user_id&limit=40', { token });
+  check('the room is readable, not just your own row', room.ok && room.body?.length >= 1, room.raw.slice(0, 160));
 
   // This is the real leak surface: `authenticated` DOES hold SELECT on
   // questions, so only the RLS policy stands between a signed-in user and the
@@ -308,7 +318,14 @@ console.log('\nprogress and boundaries');
 console.log('\narcade');
 {
   const modes = await call('/rest/v1/game_modes?select=slug,name,rules&lane=eq.arcade&order=sort_order', { token });
-  check('arcade modes are readable', modes.ok && modes.body?.length === 3, modes.raw.slice(0, 200));
+  // By name rather than by count, so adding a mode does not fail this.
+  const slugs = (modes.body || []).map((m) => m.slug);
+  check('arcade modes are readable', modes.ok && slugs.length > 0, modes.raw.slice(0, 200));
+  check(
+    'every seeded mode is listed',
+    ['ladder', 'survival', 'blitz', 'ludo'].every((s) => slugs.includes(s)),
+    slugs.join(', '),
+  );
 
   const ladderRules = (modes.body || []).find((m) => m.slug === 'ladder')?.rules;
   check('ladder ships a rung curve', Array.isArray(ladderRules?.rungs) && ladderRules.rungs.length === 10);
@@ -430,6 +447,138 @@ console.log('\narcade');
 
   const board = await call('/rest/v1/mode_records?select=mode_slug,best_value&order=best_value.desc&limit=5', { token });
   check('the board is readable', board.ok && board.body?.length > 0, board.raw.slice(0, 160));
+}
+
+// -------------------------------------------------------------------- ludo
+
+console.log('\nludo');
+{
+  const START = [0, 13, 26, 39];
+  const SAFE = [0, 8, 13, 21, 26, 34, 39, 47];
+  const absSquare = (seat, pos) => (pos >= 0 && pos <= 51 ? (START[seat] + pos) % 52 : -1);
+
+  // A deliberately independent reimplementation of the move rules. If it and
+  // the SQL disagree, one of them is wrong and this test is where that shows.
+  function legalTokens(state, seat, roll) {
+    const out = [];
+    state.players[seat].tokens.forEach((pos, i) => {
+      if (pos === 57) return;
+      if (pos === -1) {
+        if (roll === 6) out.push(i);
+        return;
+      }
+      if (pos + roll <= 57) out.push(i);
+    });
+    return out;
+  }
+
+  // A category holds ten questions and a match asks 30-50, so a match scoped
+  // to one must be refused rather than allowed to run dry halfway through.
+  const tooSmall = await rpc('start_ludo_match', { p_category_id: category.id }, token);
+  check('ludo refuses a category too small to finish a match', !tooSmall.ok, `status ${tooSmall.status}`);
+
+  const started = await rpc('start_ludo_match', { p_category_id: null }, token);
+  check('start_ludo_match on the full bank', started.ok && typeof started.body === 'string', started.raw.slice(0, 200));
+  const match = started.body;
+
+  const activeId = await rpc('active_ludo_match', {}, token);
+  check('the match is reported as active for resume', activeId.body === match, `${activeId.body}`);
+
+  const opened = await call(`/rest/v1/quiz_sessions?select=state&id=eq.${match}`, { token });
+  let state = opened.body?.[0]?.state;
+  check('a new board seats four players', state?.players?.length === 4);
+  check('seat 0 is the human', state?.players?.[0]?.kind === 'human');
+  check('a new board holds no roll', state?.pending_roll === null);
+  check('every token starts in the yard',
+    state?.players?.every((p) => p.tokens.every((t) => t === -1)));
+
+  // Moving with nothing in hand must be refused before anything else happens.
+  const noRoll = await rpc('ludo_move', { p_session_id: match, p_token: 0 }, token);
+  check('a token cannot move without a roll', !noRoll.ok, `status ${noRoll.status}`);
+
+  // ---- play it out
+  let turns = 0;
+  let asked = 0;
+  let rolls = 0;
+  let illegalRefused = false;
+  let dry = false;
+
+  while (state?.winner === null && turns < 400) {
+    turns++;
+
+    const q = await rpc('next_question', { p_session_id: match }, token);
+    let rolled = null;
+
+    if (q.ok && q.body) {
+      asked++;
+      const right = q.body.options.find((o) => o.is_correct);
+      const res = await rpc(
+        'submit_answer',
+        { p_session_id: match, p_question_id: q.body.id, p_option_id: right.id, p_time_ms: 2000 },
+        token,
+      );
+      if (!res.ok) break;
+      rolled = res.body?.[0]?.run_state?.pending_roll ?? null;
+      if (rolled) rolls++;
+    } else {
+      // The bank is exhausted. The human can no longer roll, so the bots play
+      // it out — which is still a terminating game, just not a winnable one.
+      dry = true;
+    }
+
+    let pick = null;
+    if (rolled) {
+      const legal = legalTokens(state, 0, rolled);
+
+      // Once per match, prove the server refuses a token the roll cannot move.
+      if (!illegalRefused && legal.length > 0 && legal.length < 4) {
+        const bad = [0, 1, 2, 3].find((t) => !legal.includes(t));
+        const refused = await rpc('ludo_move', { p_session_id: match, p_token: bad }, token);
+        check('an illegal token is refused by the server', !refused.ok, `status ${refused.status}`);
+        illegalRefused = true;
+      }
+
+      pick = legal.length > 0 ? legal[legal.length - 1] : null;
+    }
+
+    const moved = await rpc('ludo_move', { p_session_id: match, p_token: pick }, token);
+    if (!moved.ok) {
+      check('ludo_move during play', false, moved.raw.slice(0, 200));
+      break;
+    }
+    state = moved.body?.state;
+  }
+
+  check('the match reached a winner', state?.winner !== null && state?.winner !== undefined,
+    `after ${turns} turns, winner ${state?.winner}, bank ${dry ? 'ran dry' : 'held'}`);
+  check('a correct answer earned a roll every time', rolls === asked, `${rolls} rolls from ${asked} answers`);
+  check('the winner has all four tokens home',
+    state?.winner !== null && state?.players?.[state.winner]?.tokens.every((t) => t === 57));
+  console.log(`        (${turns} turns, ${asked} questions asked)`);
+
+  const done = await rpc('finish_quiz_session', { p_session_id: match }, token);
+  check('finishing a match records it', done.body?.[0]?.run?.slug === 'ludo', JSON.stringify(done.body?.[0]?.run));
+
+  const rec = await call(`/rest/v1/mode_records?select=wins,runs&user_id=eq.${userId}&mode_slug=eq.ludo`, { token });
+  check('a ludo record row exists', rec.ok && rec.body?.length === 1, rec.raw.slice(0, 160));
+  check('the win column agrees with the board',
+    (rec.body?.[0]?.wins ?? 0) === (state?.winner === 0 ? 1 : 0),
+    `wins ${rec.body?.[0]?.wins}, winner seat ${state?.winner}`);
+
+  // ---- boundaries
+  const anonStart = await rpc('start_ludo_match', { p_category_id: null });
+  check('anon cannot start a match', !anonStart.ok, `status ${anonStart.status}`);
+
+  const cheatBoard = await call(`/rest/v1/quiz_sessions?id=eq.${match}`, {
+    method: 'PATCH', token,
+    body: { state: { slug: 'ludo', winner: 0, players: [] } },
+  });
+  check('a user cannot rewrite the board', !cheatBoard.ok, `status ${cheatBoard.status}`);
+
+  for (const fn of ['ludo_apply_move', 'ludo_bot_turns', 'ludo_legal_moves', 'ludo_bot_pick']) {
+    const sealed = await rpc(fn, {}, token);
+    check(`${fn} is not callable from a client`, !sealed.ok, `status ${sealed.status}`);
+  }
 }
 
 report();

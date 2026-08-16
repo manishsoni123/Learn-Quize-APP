@@ -13,6 +13,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useGameModes, useMyRecords, useStartRun } from '../../src/api/arcade';
+import { useActiveMatch, useStartMatch } from '../../src/api/ludo';
 import { useCatalog } from '../../src/api/catalog';
 import { useProfile } from '../../src/api/me';
 import { ArcadeScreen, ModeCard } from '../../src/components/arcade';
@@ -28,6 +29,8 @@ export default function ArcadeHome() {
   const profile = useProfile(userId);
   const records = useMyRecords(userId);
   const startRun = useStartRun();
+  const active = useActiveMatch(userId);
+  const startMatch = useStartMatch();
 
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +44,24 @@ export default function ArcadeHome() {
 
   async function play(slug: string) {
     setError(null);
+
+    // Ludo is a match rather than a run: its own screen, its own start
+    // function, and an existing board takes precedence over a new one.
+    if (slug === 'ludo') {
+      try {
+        const existing = active.data;
+        const sessionId = existing ?? (await startMatch.mutateAsync(categoryId));
+        router.push({ pathname: '/arcade/ludo', params: { sessionId } });
+      } catch (e) {
+        setError(
+          e instanceof Error && e.message.includes('at least')
+            ? 'Not enough questions in that category for a full match. Try Everything.'
+            : 'Could not start the match. Check your connection.',
+        );
+      }
+      return;
+    }
+
     try {
       const sessionId = await startRun.mutateAsync({ modeSlug: slug, categoryId });
       router.push({
@@ -109,6 +130,10 @@ export default function ArcadeHome() {
               mode={mode}
               locked={level < mode.min_level}
               best={records.data?.[mode.slug]}
+              // A Ludo match runs long enough that abandoning one halfway is
+              // normal, so an unfinished board is offered back rather than
+              // silently replaced.
+              resume={mode.slug === 'ludo' && Boolean(active.data)}
               onPress={() => void play(mode.slug)}
             />
           ))}

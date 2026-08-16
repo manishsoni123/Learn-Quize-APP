@@ -262,11 +262,14 @@ export function ModeCard({
   mode,
   locked,
   best,
+  resume = false,
   onPress,
 }: {
   mode: GameMode;
   locked: boolean;
   best?: number;
+  /** An unfinished match is waiting. Changes what the card promises. */
+  resume?: boolean;
   onPress: () => void;
 }) {
   const accent = mode.accent_hex || modeColor(mode.slug);
@@ -292,7 +295,11 @@ export function ModeCard({
             color={accent}
           />
         </View>
-        {best !== undefined && best > 0 ? (
+        {resume ? (
+          <View style={[styles.resumeChip, { borderColor: accent }]}>
+            <Text style={[styles.resumeText, { color: accent }]}>IN PROGRESS</Text>
+          </View>
+        ) : best !== undefined && best > 0 ? (
           <View style={styles.modeBest}>
             <Text style={styles.modeBestLabel}>BEST</Text>
             <Text style={[styles.modeBestValue, { color: accent }]}>
@@ -304,7 +311,11 @@ export function ModeCard({
 
       <Text style={styles.modeName}>{mode.name}</Text>
       <Text style={styles.modeTagline}>
-        {locked ? `Unlocks at level ${mode.min_level}` : mode.tagline}
+        {locked
+          ? `Unlocks at level ${mode.min_level}`
+          : resume
+            ? 'Pick up where you left off'
+            : mode.tagline}
       </Text>
     </Pressable>
   );
@@ -415,6 +426,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  resumeChip: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingVertical: 3,
+    paddingHorizontal: space.sm,
+  },
+  resumeText: { fontSize: 9, fontWeight: '800', letterSpacing: 1.1 },
+
   modeBest: { alignItems: 'flex-end' },
   modeBestLabel: {
     color: arcade.inkFaint,
