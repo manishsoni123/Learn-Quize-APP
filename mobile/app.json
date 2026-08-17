@@ -6,21 +6,26 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#0E1315",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#EAF4F7",
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.dynatech.learnquize"
+      "bundleIdentifier": "com.dynatech.learnquize",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.dynatech.learnquize",
       "adaptiveIcon": {
-        "backgroundColor": "#0E1315",
+        "backgroundColor": "#0A3043",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "softwareKeyboardLayoutMode": "resize",
+      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -34,7 +39,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0E1315",
+          "backgroundColor": "#EAF4F7",
           "image": "./assets/splash-icon.png",
           "imageWidth": 180
         }

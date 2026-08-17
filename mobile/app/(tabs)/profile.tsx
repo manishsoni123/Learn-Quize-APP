@@ -1,4 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Linking from 'expo-linking';
 import { setStatusBarStyle } from 'expo-status-bar';
 import React, { useCallback, useState } from 'react';
 import {
@@ -18,6 +19,7 @@ import { StreakChip } from '../../src/components/game';
 import { Icon } from '../../src/components/icons';
 import { ErrorView, Loading, Spacer } from '../../src/components/ui';
 import { authErrorMessage, deleteAccount, signOut, useAuth } from '../../src/lib/auth';
+import { links } from '../../src/lib/links';
 import { colors, fonts, radius, shadow, space, tealGradient } from '../../src/theme';
 
 export default function ProfileScreen() {
@@ -140,6 +142,34 @@ export default function ProfileScreen() {
           {/* ------------------------------------------------------- actions */}
           <Spacer h={space.lg} />
           <View style={styles.list}>
+            {links.support ? (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Help and support"
+                  onPress={() => void Linking.openURL(links.support)}
+                  style={({ pressed }) => [styles.listRow, pressed && styles.pressed]}
+                >
+                  <Icon name="help" size={17} color={colors.inkMid} strokeWidth={1.6} />
+                  <Text style={styles.listLabel}>Help &amp; support</Text>
+                </Pressable>
+                <View style={styles.listDivider} />
+              </>
+            ) : null}
+            {links.privacyPolicy ? (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Privacy policy"
+                  onPress={() => void Linking.openURL(links.privacyPolicy)}
+                  style={({ pressed }) => [styles.listRow, pressed && styles.pressed]}
+                >
+                  <Icon name="lock" size={17} color={colors.inkMid} strokeWidth={1.6} />
+                  <Text style={styles.listLabel}>Privacy policy</Text>
+                </Pressable>
+                <View style={styles.listDivider} />
+              </>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Sign out"
