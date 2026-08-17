@@ -36,7 +36,12 @@
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
     "@types/aes-js": "^3.1.4",
+    "@types/jest": "^29.5.14",
     "@types/react": "~19.1.10",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0",
+    "jest": "~29.7.0",
+    "jest-expo": "~54.0.17",
     "typescript": "~5.9.2"
   },
   "overridesComment": "react-dom arrives transitively (expo-router pulls it for web) and floats to 19.2.x, which peer-requires react ^19.2.8 while SDK 54 pins react 19.1.0. Every plain `npm install` then fails with ERESOLVE. --legacy-peer-deps silences it but has previously pruned react-native-worklets, which Reanimated 4 needs and whose absence only shows up as a bundling error. Pinning react-dom to match react fixes the cause instead.",
@@ -48,7 +53,16 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint",
+    "test": "jest"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "preset": "jest-expo",
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/dist/"
+    ]
+  }
 }

@@ -173,8 +173,10 @@ The gap between the two is not theoretical. The quiz player cannot start
 without `session_questions?select=...,questions!inner(...,options(...))`, and
 whether PostgREST resolves that embed is not something psql can tell you.
 
-For the app: `cd mobile && npm run typecheck`, `npx expo-doctor`, and
-`npx expo export --platform android` to prove it bundles.
+For the app: `cd mobile && npm run typecheck && npm run lint && npm test`,
+`npx expo-doctor`, and `npx expo export --platform android` to prove it
+bundles. CI (`.github/workflows/ci.yml`) runs all of it plus the SQL suite on
+every push.
 
 ---
 
@@ -230,6 +232,17 @@ Flip `is_active` as each reaches roughly 500 questions.
 Every question records `source`, `source_url` and `source_licence`. Keep those
 populated on bulk imports; it is the only way to answer a licensing question
 later without guesswork.
+
+**Bulk import**: fill `content/question-template.csv` (one row per question,
+`correct` = a/b/c/d), then:
+
+```bash
+node scripts/import-questions.mjs content/your-batch.csv
+```
+
+It validates every row (options, correct key, explanation, licence columns on
+imports), refuses bad batches whole, and writes a duplicate-safe SQL file that
+inserts everything as `in_review` — approval stays a deliberate staff act.
 
 ## The product
 

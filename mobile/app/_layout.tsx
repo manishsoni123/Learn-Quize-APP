@@ -72,7 +72,9 @@ function OfflineBanner() {
       accessibilityLiveRegion="polite"
       accessibilityRole="alert"
     >
-      <Text style={bannerStyles.text}>No connection — answers pause until you're back online</Text>
+      <Text style={bannerStyles.text}>
+        {"No connection — answers pause until you're back online"}
+      </Text>
     </View>
   );
 }

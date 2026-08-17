@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { colors, fonts, radius, shadow, space, trackTint } from '../theme';
+import { colors, fonts, radius, space, trackTint } from '../theme';
 import type { Category } from '../lib/database.types';
 import { Icon } from './icons';
 

@@ -21,7 +21,7 @@ import {
   signUp,
 } from '../../src/lib/auth';
 import { Icon, type IconName } from '../../src/components/icons';
-import { Button, Segmented, Spacer, Txt } from '../../src/components/ui';
+import { Button, Segmented, Txt } from '../../src/components/ui';
 import { colors, fonts, radius, space, tealGradient } from '../../src/theme';
 
 const MODES = ['Sign in', 'Create account'] as const;
