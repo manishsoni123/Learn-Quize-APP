@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { seededShuffle } from '../lib/shuffle';
 import { supabase } from '../lib/supabase';
 import type {
   FinishSessionResult,
@@ -94,8 +95,14 @@ export function useSession(sessionId: string | undefined) {
         difficulty: row.questions.difficulty,
         kind: row.questions.kind,
         explanation: row.questions.explanation,
-        options: [...(row.questions.options ?? [])].sort(
-          (a: PlayableOption, b: PlayableOption) => a.sort_order - b.sort_order,
+        // Sort first so the permutation starts from a stable base, then
+        // shuffle seeded by session + question: authors write the correct
+        // option first, and without this it would always render on top.
+        options: seededShuffle(
+          [...(row.questions.options ?? [])].sort(
+            (a: PlayableOption, b: PlayableOption) => a.sort_order - b.sort_order,
+          ),
+          `${sessionId}:${row.questions.id}`,
         ),
       }));
 

@@ -1274,6 +1274,20 @@ declare
   v_approver uuid;
   v_count    integer;
 begin
+  -- The inserts above always write the correct option first. Shuffle the
+  -- stored order so no client that trusts sort_order leaks the answer.
+  -- Re-running reshuffles, which is harmless.
+  with shuffled as (
+    select o.id, row_number() over (partition by o.question_id order by random()) as rn
+    from public.options o
+    join public.questions q on q.id = o.question_id
+    where q.source = 'seed'
+  )
+  update public.options o
+     set sort_order = s.rn
+    from shuffled s
+   where s.id = o.id;
+
   select count(*) into v_count from public.questions where source = 'seed';
 
   select id into v_approver
