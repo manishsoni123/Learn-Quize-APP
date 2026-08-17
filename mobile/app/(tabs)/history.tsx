@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useHistory, type HistoryEntry } from '../../src/api/me';
 import { Fraction } from '../../src/components/game';
-import { EmptyState, Loading, Spacer, Txt } from '../../src/components/ui';
+import { EmptyState, ErrorView, Loading, Spacer, Txt } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { modeLabel } from '../../src/lib/labels';
 import { colors, fonts, radius, space } from '../../src/theme';
@@ -19,6 +19,18 @@ export default function HistoryScreen() {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
         <Loading />
+      </SafeAreaView>
+    );
+  }
+
+  if (history.isError) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <ErrorView
+          title="Could not load your history"
+          detail="Check your connection and try again."
+          onRetry={() => void history.refetch()}
+        />
       </SafeAreaView>
     );
   }

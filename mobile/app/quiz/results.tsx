@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 
@@ -26,6 +26,16 @@ export default function ResultsScreen() {
   useEffect(() => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, []);
+
+  // Hardware back from results goes home — the quiz behind it is finished
+  // and must not be re-entered.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/(tabs)');
+      return true;
+    });
+    return () => sub.remove();
+  }, [router]);
 
   const context = [category || 'Mixed', mode ? modeLabel(mode) : null]
     .filter(Boolean)

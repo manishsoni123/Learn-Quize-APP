@@ -78,13 +78,18 @@ const toneColor: Record<TextTone, string> = {
   default: colors.ink,
   mid: colors.inkMid,
   soft: colors.inkSoft,
-  faint: colors.inkFaint,
+  // Deliberately the same ink as `soft`: the lighter inkFaint fails WCAG AA
+  // at caption sizes. inkFaint stays for icons and placeholders only.
+  faint: colors.inkSoft,
   brand: colors.brandDeep,
   correct: colors.correctInk,
   wrong: colors.wrongInk,
   onDark: colors.onDark,
   onDarkSoft: colors.onDarkSoft,
 };
+
+/** Fixed-height rows survive large system font settings up to this factor. */
+const MAX_FONT_SCALE = 1.4;
 
 export function Txt({
   children,
@@ -102,6 +107,7 @@ export function Txt({
   return (
     <Text
       numberOfLines={numberOfLines}
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
       style={[type[variant] as TextStyle, { color: toneColor[tone] }, style]}
     >
       {children}
@@ -109,7 +115,8 @@ export function Txt({
   );
 }
 
-/** Uppercase kicker label — "QUICK QUIZ", "DEVELOPER TRACK". */
+/** Uppercase kicker label — "QUICK QUIZ", "DEVELOPER TRACK". Uppercased via
+ *  style so screen readers get the real string, not spelled-out letters. */
 export function Eyebrow({
   children,
   color = colors.brandDeep,
@@ -118,8 +125,11 @@ export function Eyebrow({
   color?: string;
 }) {
   return (
-    <Text style={[type.eyebrow as TextStyle, { color }]}>
-      {String(children).toUpperCase()}
+    <Text
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
+      style={[type.eyebrow as TextStyle, { color, textTransform: 'uppercase' }]}
+    >
+      {children}
     </Text>
   );
 }
@@ -198,7 +208,7 @@ export function Segmented({
         return (
           <Pressable
             key={option}
-            accessibilityRole="button"
+            accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             onPress={() => {
               if (!active) onChange(option);
@@ -209,6 +219,7 @@ export function Segmented({
             ]}
           >
             <Text
+              maxFontSizeMultiplier={MAX_FONT_SCALE}
               style={[
                 styles.segmentLabel,
                 active && { fontFamily: fonts.sansSemiBold },

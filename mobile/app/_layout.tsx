@@ -12,31 +12,83 @@ import {
   Newsreader_400Regular_Italic,
   Newsreader_500Medium,
 } from '@expo-google-fonts/newsreader';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import NetInfo from '@react-native-community/netinfo';
+import {
+  QueryClient,
+  QueryClientProvider,
+  focusManager,
+  onlineManager,
+} from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AppState, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from '../src/lib/auth';
 import { isSupabaseConfigured } from '../src/lib/supabase';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { Button, Loading, Screen, Spacer, Txt } from '../src/components/ui';
-import { colors, space } from '../src/theme';
+import { colors, fonts, space } from '../src/theme';
 
 void SplashScreen.preventAutoHideAsync();
+
+// React Query assumes it runs in a browser. On a phone, "online" comes from
+// NetInfo and "focused" from AppState — without these bridges it would never
+// notice a dropped connection or a return from the background, and queries
+// would neither pause nor refresh.
+onlineManager.setEventListener((setOnline) =>
+  NetInfo.addEventListener((state) => setOnline(state.isConnected !== false)),
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: true,
       staleTime: 30 * 1000,
     },
   },
+});
+
+/** Slim banner over everything while the device has no connection. */
+function OfflineBanner() {
+  const insets = useSafeAreaInsets();
+  const [offline, setOffline] = useState(false);
+
+  useEffect(
+    () => NetInfo.addEventListener((state) => setOffline(state.isConnected === false)),
+    [],
+  );
+
+  if (!offline) return null;
+
+  return (
+    <View
+      style={[bannerStyles.banner, { paddingTop: insets.top + 4 }]}
+      accessibilityLiveRegion="polite"
+      accessibilityRole="alert"
+    >
+      <Text style={bannerStyles.text}>No connection — answers pause until you're back online</Text>
+    </View>
+  );
+}
+
+const bannerStyles = StyleSheet.create({
+  banner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    backgroundColor: colors.brandInk,
+    paddingBottom: 6,
+    alignItems: 'center',
+  },
+  text: { fontFamily: fonts.sansMedium, fontSize: 12, color: colors.onDarkSoft },
 });
 
 /**
@@ -123,6 +175,14 @@ function SetupRequired() {
 }
 
 export default function RootLayout() {
+  // Focus bridge: returning from the background counts as "window focus".
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) =>
+      focusManager.setFocused(state === 'active'),
+    );
+    return () => sub.remove();
+  }, []);
+
   const [fontsLoaded, fontError] = useFonts({
     Newsreader_500Medium,
     Newsreader_400Regular_Italic,
@@ -155,6 +215,7 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
               <StatusBar style="dark" />
+              <OfflineBanner />
               <AuthGate>
               <Stack
                 screenOptions={{

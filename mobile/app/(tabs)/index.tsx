@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -50,7 +50,10 @@ export default function HomeScreen() {
     return out;
   }, [history.data]);
 
+  const [startError, setStartError] = useState<string | null>(null);
+
   async function startQuickSession(mode: 'practice' | 'weak_spots') {
+    setStartError(null);
     try {
       const sessionId = await startSession.mutateAsync({
         mode,
@@ -58,10 +61,15 @@ export default function HomeScreen() {
         questionCount: MIN_QUESTIONS,
       });
       router.push({ pathname: '/quiz/[sessionId]', params: { sessionId } });
-    } catch {
-      // start_quiz_session raises P0002 when nothing matches. The buttons that
-      // can hit that are already gated on a count, so this is rare — swallow
-      // it rather than throwing a modal at someone mid-tap.
+    } catch (e) {
+      // The primary button doing nothing is the worst possible answer —
+      // offline taps used to be swallowed here.
+      const message = e instanceof Error ? e.message : '';
+      setStartError(
+        message.includes('no questions available')
+          ? 'No questions are available yet. Try a specific topic below.'
+          : 'Could not start the quiz. Check your connection and try again.',
+      );
     }
   }
 
@@ -142,11 +150,27 @@ export default function HomeScreen() {
               {MIN_QUESTIONS} mixed questions,{'\n'}one coffee break.
             </Text>
             <View style={styles.heroButton}>
-              <Text style={styles.heroButtonLabel}>Start now</Text>
-              <Icon name="arrowRight" size={15} color={colors.brandInk} strokeWidth={2} />
+              <Text style={styles.heroButtonLabel}>
+                {startSession.isPending ? 'Starting…' : 'Start now'}
+              </Text>
+              {startSession.isPending ? null : (
+                <Icon name="arrowRight" size={15} color={colors.brandInk} strokeWidth={2} />
+              )}
             </View>
           </LinearGradient>
         </Pressable>
+
+        {startError ? (
+          <>
+            <Spacer h={space.sm} />
+            <View style={styles.startErrorRow}>
+              <Icon name="alert" size={13} color={colors.wrongInk} strokeWidth={2} />
+              <Text style={styles.startErrorText} accessibilityLiveRegion="polite">
+                {startError}
+              </Text>
+            </View>
+          </>
+        ) : null}
 
         {/* ---------------------------------------------------------- review */}
         {dueCount > 0 ? (
@@ -281,4 +305,13 @@ const styles = StyleSheet.create({
 
   trackHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
   categoryList: { gap: space.sm },
+
+  startErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  startErrorText: {
+    flex: 1,
+    fontFamily: fonts.sans,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: colors.wrongInk,
+  },
 });

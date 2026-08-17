@@ -1,7 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  BackHandler,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -24,7 +32,7 @@ import {
 import { Icon } from '../../src/components/icons';
 import { Button, ErrorView, Eyebrow, Loading, Spacer, Txt } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
-import { colors, radius, space } from '../../src/theme';
+import { colors, fonts, radius, space } from '../../src/theme';
 import { modeLabel } from '../../src/lib/labels';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -45,6 +53,7 @@ export default function QuizScreen() {
   /** Per-question outcome, drives the segmented progress colours. */
   const [outcomes, setOutcomes] = useState<('correct' | 'wrong')[]>([]);
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const questionStartedAt = useRef(Date.now());
   const finishing = useRef(false);
@@ -80,6 +89,13 @@ export default function QuizScreen() {
 
   /* ------------------------------------------------------------ whole-run clock */
 
+  // `finish` changes identity with mutation state; going through a ref keeps
+  // the countdown effect from re-running — which would reset the clock.
+  const finishRef = useRef(finish);
+  useEffect(() => {
+    finishRef.current = finish;
+  }, [finish]);
+
   useEffect(() => {
     if (!timeLimit) return;
     setRemaining(timeLimit);
@@ -90,32 +106,25 @@ export default function QuizScreen() {
       setRemaining(Math.max(left, 0));
       if (left <= 0) {
         clearInterval(id);
-        void finish();
+        void finishRef.current();
       }
     }, 250);
 
     return () => clearInterval(id);
-  }, [timeLimit, finish]);
+  }, [timeLimit]);
 
   /* ---------------------------------------------------------------- answer */
 
   async function choose(optionId: string) {
-    if (revealed || !question) return;
+    if (revealed || !question || submitAnswer.isPending) return;
 
     const elapsed = Date.now() - questionStartedAt.current;
-    const correct = question.options.find((o) => o.id === optionId)?.is_correct ?? false;
-
-    // Feedback lands immediately; the network call catches up behind it. The
-    // server is still the authority on scoring — this only drives the colours.
+    setSubmitError(null);
     setChosenId(optionId);
-    setRevealed(true);
-    setOutcomes((prev) => [...prev, correct ? 'correct' : 'wrong']);
-    void Haptics.notificationAsync(
-      correct
-        ? Haptics.NotificationFeedbackType.Success
-        : Haptics.NotificationFeedbackType.Error,
-    );
 
+    // The reveal waits for the server. Optimistic green ticks over a dead
+    // connection would walk the user through ten questions and then score
+    // them zero — worse than a moment's spinner.
     try {
       await submitAnswer.mutateAsync({
         sessionId: sessionId!,
@@ -123,10 +132,26 @@ export default function QuizScreen() {
         optionId,
         timeMs: elapsed,
       });
-    } catch {
-      // Already answered, or offline. Neither is worth interrupting the run
-      // for — the results screen reads the authoritative totals.
+    } catch (e) {
+      // 23505 = already answered (a retry raced a slow first attempt): the
+      // answer IS recorded, so revealing is correct. Anything else means the
+      // answer never landed — put the question back and say so.
+      const code = (e as { code?: string } | null)?.code;
+      if (code !== '23505') {
+        setChosenId(null);
+        setSubmitError('That answer did not go through. Check your connection and tap it again.');
+        return;
+      }
     }
+
+    const correct = question.options.find((o) => o.id === optionId)?.is_correct ?? false;
+    setRevealed(true);
+    setOutcomes((prev) => [...prev, correct ? 'correct' : 'wrong']);
+    void Haptics.notificationAsync(
+      correct
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
   }
 
   function next() {
@@ -146,6 +171,21 @@ export default function QuizScreen() {
       { text: 'Leave', style: 'destructive', onPress: () => void finish() },
     ]);
   }
+
+  // Android hardware back goes through the same confirm as the close button.
+  // Letting it pop the screen silently would orphan the session — no results,
+  // no streak, no review scheduling.
+  const confirmQuitRef = useRef(confirmQuit);
+  useEffect(() => {
+    confirmQuitRef.current = confirmQuit;
+  });
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      confirmQuitRef.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
 
   function report() {
     if (!question || !userId) return;
@@ -273,11 +313,20 @@ export default function QuizScreen() {
               label={KEYS[i] ?? String(i + 1)}
               body={option.body}
               state={optionState(option.id, option.is_correct)}
-              disabled={revealed}
+              disabled={revealed || submitAnswer.isPending}
               onPress={() => void choose(option.id)}
             />
           ))}
         </View>
+
+        {submitError ? (
+          <>
+            <Spacer h={space.md} />
+            <Text style={styles.submitError} accessibilityLiveRegion="polite">
+              {submitError}
+            </Text>
+          </>
+        ) : null}
 
         {/* ------------------------------------------------------ explanation */}
         {revealed ? (
@@ -340,5 +389,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.xl,
     paddingTop: space.md,
     paddingBottom: space.sm,
+  },
+
+  submitError: {
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.wrongInk,
+    textAlign: 'center',
   },
 });

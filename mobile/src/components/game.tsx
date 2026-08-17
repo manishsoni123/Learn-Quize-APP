@@ -97,8 +97,17 @@ export function SegmentedProgress({ segments }: { segments: SegmentResult[] }) {
     todo: colors.lineNeutral,
   };
 
+  const answered = segments.filter((s) => s === 'correct' || s === 'wrong').length;
+  const right = segments.filter((s) => s === 'correct').length;
+
   return (
-    <View style={styles.segments}>
+    <View
+      style={styles.segments}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={`${answered} of ${segments.length} answered, ${right} correct`}
+      accessibilityValue={{ min: 0, max: segments.length, now: answered }}
+    >
       {segments.map((segment, i) => (
         <View key={i} style={[styles.segment, { backgroundColor: tint[segment] }]} />
       ))}
@@ -217,9 +226,19 @@ export function AnswerOption({
 
   const tag = state === 'correct' ? 'CORRECT' : state === 'missed' ? 'ANSWER' : state === 'wrong' ? 'YOUR PICK' : null;
 
+  const outcome =
+    state === 'correct'
+      ? ', correct'
+      : state === 'wrong'
+        ? ', your pick, incorrect'
+        : state === 'missed'
+          ? ', this was the correct answer'
+          : '';
+
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={`Option ${label}: ${body}${outcome}`}
       accessibilityState={{ disabled, selected: state === 'selected' }}
       disabled={disabled}
       onPress={onPress}
@@ -277,9 +296,17 @@ export function TimerBar({ remaining, total }: { remaining: number; total: numbe
   const fraction = Math.max(0, Math.min(remaining / Math.max(total, 1), 1));
   // Turns amber under 25% so the user feels the clock before it bites.
   const tint = fraction > 0.25 ? colors.brand : colors.warn;
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
 
   return (
-    <View style={styles.timerTrack}>
+    <View
+      style={styles.timerTrack}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={`${minutes} minutes ${seconds} seconds remaining`}
+      accessibilityValue={{ min: 0, max: total, now: remaining }}
+    >
       <View
         style={[styles.timerFill, { width: `${fraction * 100}%`, backgroundColor: tint }]}
       />
