@@ -28,7 +28,7 @@ Questions land as `in_review` — nothing is playable yet, by design.
 
 | Setting | Value | Why |
 |---|---|---|
-| **URL Configuration → Site URL** | your GitHub Pages URL (e.g. `https://<org>.github.io/Learn-Quize/`) | Fallback target for auth emails. |
+| **URL Configuration → Site URL** | `https://manishsoni123.github.io/Learn-Quize-APP/site/` | Fallback target for auth emails. |
 | **URL Configuration → Redirect URLs** | add `learnquize://**` | Password-reset and confirmation links must be allowed to deep-link back into the app. |
 | **Sign In / Up → Confirm email** | **leave ON** | The app handles the "check your inbox" flow; turning it off invites bot signups. |
 | **Passwords → Minimum length** | **8** | The app enforces 8 as well; keep them in sync. |
