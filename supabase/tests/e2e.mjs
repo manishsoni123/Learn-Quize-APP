@@ -282,20 +282,16 @@ console.log('\nprogress and boundaries');
   const internal = await rpc('add_league_xp', { p_user_id: userId, p_xp: 999999 }, token);
   check('internal helpers are not callable', !internal.ok, `status ${internal.status}`);
 
-  // Filtered to this user's own row on purpose. The policy lets you read
-  // everyone in your room, and every previous run of this suite left a user
-  // behind in the same weekly bronze room — so an unfiltered query returns a
-  // row count that grows with the number of times anyone has run the tests.
+  // Leagues are retired: earning XP must no longer create league rows.
   const league = await call(
-    `/rest/v1/league_members?select=xp_earned,final_rank&user_id=eq.${userId}`,
+    `/rest/v1/league_members?select=xp_earned&user_id=eq.${userId}`,
     { token },
   );
-  check('league standing is readable', league.ok, league.raw.slice(0, 160));
-  check('the session put the player in a league room', league.body?.length === 1, `${league.body?.length} rows`);
-  check('league xp tracks the session', league.body?.[0]?.xp_earned === summary.xp_earned, `${league.body?.[0]?.xp_earned} vs ${summary.xp_earned}`);
+  check('leagues are retired — no league row appears', league.ok && league.body?.length === 0, `${league.body?.length} rows`);
 
-  const room = await call('/rest/v1/league_members?select=user_id&limit=40', { token });
-  check('the room is readable, not just your own row', room.ok && room.body?.length >= 1, room.raw.slice(0, 160));
+  // Profiles are own-row-only: another user's profile is invisible.
+  const others = await call(`/rest/v1/profiles?select=id&id=neq.${userId}&limit=5`, { token });
+  check('other profiles are not readable', others.ok && others.body?.length === 0, `${others.body?.length} rows`);
 
   // This is the real leak surface: `authenticated` DOES hold SELECT on
   // questions, so only the RLS policy stands between a signed-in user and the
@@ -313,275 +309,135 @@ console.log('\nprogress and boundaries');
   check('a user cannot author questions', !write.ok, `status ${write.status}`);
 }
 
-// ------------------------------------------------------------------ arcade
+// -------------------------------------------------- retired arcade surface
 
-console.log('\narcade');
+// The Arcade lane (Ladder, Survival, Blitz, Ludo) was removed from the app
+// and its entry points revoked (migration 20260818090000). This section pins
+// the seal: every one of them must refuse a valid signed-in token.
+
+console.log('\nretired arcade surface');
 {
-  const modes = await call('/rest/v1/game_modes?select=slug,name,rules&lane=eq.arcade&order=sort_order', { token });
-  // By name rather than by count, so adding a mode does not fail this.
-  const slugs = (modes.body || []).map((m) => m.slug);
-  check('arcade modes are readable', modes.ok && slugs.length > 0, modes.raw.slice(0, 200));
-  check(
-    'every seeded mode is listed',
-    ['ladder', 'survival', 'blitz', 'ludo'].every((s) => slugs.includes(s)),
-    slugs.join(', '),
-  );
-
-  const ladderRules = (modes.body || []).find((m) => m.slug === 'ladder')?.rules;
-  check('ladder ships a rung curve', Array.isArray(ladderRules?.rungs) && ladderRules.rungs.length === 10);
-
-  // ---- ladder: climb three rungs, then bank
-  const started = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id }, token);
-  check('start_arcade_run', started.ok && typeof started.body === 'string', started.raw.slice(0, 200));
-  const run = started.body;
-
-  const before = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
-  const xpBefore = before.body?.[0]?.xp ?? 0;
-
-  const served = new Set();
-  let lastState = null;
-
-  for (let i = 1; i <= 3; i++) {
-    const q = await rpc('next_question', { p_session_id: run }, token);
-    if (!q.ok || !q.body) {
-      check(`next_question #${i}`, false, q.raw.slice(0, 200));
-      break;
-    }
-    check(`next_question #${i} carries options`, (q.body.options?.length ?? 0) >= 2);
-    check(`next_question #${i} is a fresh question`, !served.has(q.body.id));
-    served.add(q.body.id);
-
-    const right = q.body.options.find((o) => o.is_correct);
-    const res = await rpc(
-      'submit_answer',
-      { p_session_id: run, p_question_id: q.body.id, p_option_id: right.id, p_time_ms: 3000 },
-      token,
-    );
-    if (!res.ok) {
-      check(`ladder answer #${i}`, false, res.raw.slice(0, 200));
-      break;
-    }
-    lastState = res.body?.[0]?.run_state;
-
-    // The mechanic depends on this: nothing is earned per answer, it is only
-    // ever riding on the run.
-    check(`ladder answer #${i} pays nothing up front`, res.body?.[0]?.xp_awarded === 0, `got ${res.body?.[0]?.xp_awarded}`);
-    check(`ladder answer #${i} climbed to rung ${i}`, lastState?.rung === i, `rung ${lastState?.rung}`);
+  for (const [fn, args] of [
+    ['start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id }],
+    ['next_question', { p_session_id: sessionId }],
+    ['bank_ladder', { p_session_id: sessionId }],
+    ['start_ludo_match', { p_category_id: null }],
+    ['active_ludo_match', {}],
+    ['ludo_move', { p_session_id: sessionId, p_token: 0 }],
+  ]) {
+    const sealed = await rpc(fn, args, token);
+    check(`${fn} is sealed`, !sealed.ok, `status ${sealed.status}`);
   }
 
-  const during = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
-  check('ladder credits nothing before banking', during.body?.[0]?.xp === xpBefore, `${during.body?.[0]?.xp} vs ${xpBefore}`);
-
-  const banked = await rpc('bank_ladder', { p_session_id: run }, token);
-  check('bank_ladder', banked.ok, banked.raw.slice(0, 200));
-  check('rung 3 banks exactly 40 by the seeded curve', banked.body?.[0]?.banked === 40, `got ${banked.body?.[0]?.banked}`);
-
-  const after = await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token });
-  check('banked xp reached the profile', after.body?.[0]?.xp === xpBefore + 40, `${after.body?.[0]?.xp} vs ${xpBefore + 40}`);
-
-  const done = await rpc('finish_quiz_session', { p_session_id: run }, token);
-  check('finishing a run reports what it scored', done.body?.[0]?.run?.value === 40, JSON.stringify(done.body?.[0]?.run));
-  check('a first run is a personal best', done.body?.[0]?.run?.is_record === true);
-
-  // ---- ladder: bust
-  const bust = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id }, token);
-  const bustRun = bust.body;
-  const bustBefore = (await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token })).body?.[0]?.xp;
-
-  const q1 = await rpc('next_question', { p_session_id: bustRun }, token);
-  await rpc('submit_answer', {
-    p_session_id: bustRun, p_question_id: q1.body.id,
-    p_option_id: q1.body.options.find((o) => o.is_correct).id, p_time_ms: 3000,
-  }, token);
-
-  const q2 = await rpc('next_question', { p_session_id: bustRun }, token);
-  const missed = await rpc('submit_answer', {
-    p_session_id: bustRun, p_question_id: q2.body.id,
-    p_option_id: q2.body.options.find((o) => !o.is_correct).id, p_time_ms: 3000,
-  }, token);
-
-  check('a wrong answer ends the ladder', missed.body?.[0]?.run_state?.run_over === true);
-  check('a bust leaves nothing riding', missed.body?.[0]?.run_state?.unbanked === 0);
-
-  await rpc('bank_ladder', { p_session_id: bustRun }, token);
-  const bustAfter = (await call(`/rest/v1/profiles?select=xp&id=eq.${userId}`, { token })).body?.[0]?.xp;
-  check('a busted ladder pays nothing, even if banked', bustAfter === bustBefore, `${bustAfter} vs ${bustBefore}`);
-  await rpc('finish_quiz_session', { p_session_id: bustRun }, token);
-
-  // ---- survival: three lives
-  const surv = await rpc('start_arcade_run', { p_mode_slug: 'survival', p_category_id: category.id }, token);
-  check('start survival', surv.ok, surv.raw.slice(0, 200));
-
-  for (let i = 1; i <= 3; i++) {
-    const q = await rpc('next_question', { p_session_id: surv.body }, token);
-    const wrong = q.body.options.find((o) => !o.is_correct);
-    const res = await rpc('submit_answer', {
-      p_session_id: surv.body, p_question_id: q.body.id,
-      p_option_id: wrong.id, p_time_ms: 3000,
-    }, token);
-    check(`survival: ${3 - i} lives left after ${i} misses`, res.body?.[0]?.run_state?.lives === 3 - i, `got ${res.body?.[0]?.run_state?.lives}`);
-    check(`survival run_over is ${i === 3} after ${i} misses`, res.body?.[0]?.run_state?.run_over === (i === 3));
+  for (const fn of ['apply_mode_rules', 'ludo_apply_move', 'ludo_bot_turns']) {
+    const sealed = await rpc(fn, {}, token);
+    check(`${fn} is not callable from a client`, !sealed.ok, `status ${sealed.status}`);
   }
-  await rpc('finish_quiz_session', { p_session_id: surv.body }, token);
 
-  // ---- boundaries
-  const anonRun = await rpc('start_arcade_run', { p_mode_slug: 'ladder', p_category_id: category.id });
-  check('anon cannot start a run', !anonRun.ok, `status ${anonRun.status}`);
-
-  const fakeMode = await rpc('start_arcade_run', { p_mode_slug: 'not_a_mode', p_category_id: category.id }, token);
-  check('an unknown mode is refused', !fakeMode.ok, `status ${fakeMode.status}`);
-
+  // The tables behind them still refuse direct writes.
   const cheatRecord = await call('/rest/v1/mode_records', {
     method: 'POST', token,
     body: { user_id: userId, mode_slug: 'survival', week_start: '2026-08-10', best_value: 999999 },
   });
   check('a user cannot write a leaderboard row', !cheatRecord.ok, `status ${cheatRecord.status}`);
 
-  const cheatState = await call(`/rest/v1/quiz_sessions?id=eq.${surv.body}`, {
+  const cheatState = await call(`/rest/v1/quiz_sessions?id=eq.${sessionId}`, {
     method: 'PATCH', token, body: { state: { lives: 99 } },
   });
   check('a user cannot write run state', !cheatState.ok, `status ${cheatState.status}`);
 
-  const internal = await rpc('apply_mode_rules', { p_session_id: surv.body, p_correct: true }, token);
-  check('apply_mode_rules is not callable', !internal.ok, `status ${internal.status}`);
-
-  const board = await call('/rest/v1/mode_records?select=mode_slug,best_value&order=best_value.desc&limit=5', { token });
-  check('the board is readable', board.ok && board.body?.length > 0, board.raw.slice(0, 160));
+  // The retired modes cannot come back in through the focus entry point.
+  const survival = await rpc(
+    'start_quiz_session',
+    { p_mode: 'survival', p_category_id: category.id, p_question_count: 5 },
+    token,
+  );
+  check('start_quiz_session refuses retired modes', !survival.ok, `status ${survival.status}`);
 }
 
-// -------------------------------------------------------------------- ludo
+// ------------------------------------------------------------- leaderboard
 
-console.log('\nludo');
+console.log('\nleaderboard');
 {
-  const START = [0, 13, 26, 39];
-  const SAFE = [0, 8, 13, 21, 26, 34, 39, 47];
-  const absSquare = (seat, pos) => (pos >= 0 && pos <= 51 ? (START[seat] + pos) % 52 : -1);
+  // One finished quiz is below the three-quiz floor: not ranked yet.
+  const early = await rpc('get_leaderboard', { p_all_time: true }, token);
+  check('get_leaderboard responds', early.ok, early.raw.slice(0, 200));
+  check(
+    'one quiz is below the ranking floor',
+    (early.body || []).every((r) => r.user_id !== userId),
+  );
 
-  // A deliberately independent reimplementation of the move rules. If it and
-  // the SQL disagree, one of them is wrong and this test is where that shows.
-  function legalTokens(state, seat, roll) {
-    const out = [];
-    state.players[seat].tokens.forEach((pos, i) => {
-      if (pos === 57) return;
-      if (pos === -1) {
-        if (roll === 6) out.push(i);
-        return;
-      }
-      if (pos + roll <= 57) out.push(i);
-    });
-    return out;
+  // Play two more quick sessions to cross the floor.
+  for (let s = 0; s < 2; s++) {
+    const run = await rpc(
+      'start_quiz_session',
+      { p_mode: 'practice', p_category_id: category.id, p_question_count: 3 },
+      token,
+    );
+    if (!run.ok) { check(`floor session ${s + 1} starts`, false, run.raw.slice(0, 200)); break; }
+    const served = await call(
+      `/rest/v1/session_questions?select=questions!inner(id,options(id,is_correct))&session_id=eq.${run.body}`,
+      { token },
+    );
+    for (const row of served.body || []) {
+      await rpc('submit_answer', {
+        p_session_id: run.body,
+        p_question_id: row.questions.id,
+        p_option_id: row.questions.options.find((o) => o.is_correct).id,
+        p_time_ms: 2000,
+      }, token);
+    }
+    await rpc('finish_quiz_session', { p_session_id: run.body }, token);
   }
 
-  // A category holds ten questions and a match asks 30-50, so a match scoped
-  // to one must be refused rather than allowed to run dry halfway through.
-  const tooSmall = await rpc('start_ludo_match', { p_category_id: category.id }, token);
-  check('ludo refuses a category too small to finish a match', !tooSmall.ok, `status ${tooSmall.status}`);
+  const board = await rpc('get_leaderboard', { p_all_time: true }, token);
+  const me = (board.body || []).find((r) => r.user_id === userId);
+  check('three finished quizzes earn a rank', Boolean(me), `rows: ${board.body?.length}`);
+  check('the caller\'s row is flagged is_me', me?.is_me === true);
+  check('quizzes counts all three sessions', me?.quizzes === 3, `got ${me?.quizzes}`);
+  check(
+    'avg_score is a rounded percentage',
+    typeof me?.avg_score === 'number' && me.avg_score >= 0 && me.avg_score <= 100,
+    `got ${me?.avg_score}`,
+  );
+  check(
+    'the board exposes names and scores, nothing else',
+    me && Object.keys(me).sort().join(',') === 'avg_score,display_name,is_me,quizzes,rank,user_id',
+    me ? Object.keys(me).join(',') : '',
+  );
+  check(
+    'nobody below the floor is ranked',
+    (board.body || []).every((r) => r.quizzes >= 3),
+  );
+}
 
-  const started = await rpc('start_ludo_match', { p_category_id: null }, token);
-  check('start_ludo_match on the full bank', started.ok && typeof started.body === 'string', started.raw.slice(0, 200));
-  const match = started.body;
+// -------------------------------------------------------- account deletion
 
-  const activeId = await rpc('active_ludo_match', {}, token);
-  check('the match is reported as active for resume', activeId.body === match, `${activeId.body}`);
+// Doubles as cleanup: without this, every run of this suite against a hosted
+// project would leave a permanent account inflating the leaderboard.
+console.log('\naccount deletion');
+{
+  const del = await rpc('delete_account', {}, token);
+  check('delete_account succeeds', del.ok, del.raw.slice(0, 200));
 
-  const opened = await call(`/rest/v1/quiz_sessions?select=state&id=eq.${match}`, { token });
-  let state = opened.body?.[0]?.state;
-  check('a new board seats four players', state?.players?.length === 4);
-  check('seat 0 is the human', state?.players?.[0]?.kind === 'human');
-  check('a new board holds no roll', state?.pending_roll === null);
-  check('every token starts in the yard',
-    state?.players?.every((p) => p.tokens.every((t) => t === -1)));
+  const gone = await call(`/rest/v1/profiles?select=id&id=eq.${userId}`, { token });
+  check('the profile is gone', gone.body?.length === 0, `${gone.body?.length} rows`);
 
-  // Moving with nothing in hand must be refused before anything else happens.
-  const noRoll = await rpc('ludo_move', { p_session_id: match, p_token: 0 }, token);
-  check('a token cannot move without a roll', !noRoll.ok, `status ${noRoll.status}`);
-
-  // ---- play it out
-  let turns = 0;
-  let asked = 0;
-  let rolls = 0;
-  let illegalRefused = false;
-  let dry = false;
-
-  while (state?.winner === null && turns < 400) {
-    turns++;
-
-    const q = await rpc('next_question', { p_session_id: match }, token);
-    let rolled = null;
-
-    if (q.ok && q.body) {
-      asked++;
-      const right = q.body.options.find((o) => o.is_correct);
-      const res = await rpc(
-        'submit_answer',
-        { p_session_id: match, p_question_id: q.body.id, p_option_id: right.id, p_time_ms: 2000 },
-        token,
-      );
-      if (!res.ok) break;
-      rolled = res.body?.[0]?.run_state?.pending_roll ?? null;
-      if (rolled) rolls++;
-    } else {
-      // The bank is exhausted. The human can no longer roll, so the bots play
-      // it out — which is still a terminating game, just not a winnable one.
-      dry = true;
-    }
-
-    let pick = null;
-    if (rolled) {
-      const legal = legalTokens(state, 0, rolled);
-
-      // Once per match, prove the server refuses a token the roll cannot move.
-      if (!illegalRefused && legal.length > 0 && legal.length < 4) {
-        const bad = [0, 1, 2, 3].find((t) => !legal.includes(t));
-        const refused = await rpc('ludo_move', { p_session_id: match, p_token: bad }, token);
-        check('an illegal token is refused by the server', !refused.ok, `status ${refused.status}`);
-        illegalRefused = true;
-      }
-
-      pick = legal.length > 0 ? legal[legal.length - 1] : null;
-    }
-
-    const moved = await rpc('ludo_move', { p_session_id: match, p_token: pick }, token);
-    if (!moved.ok) {
-      check('ludo_move during play', false, moved.raw.slice(0, 200));
-      break;
-    }
-    state = moved.body?.state;
-  }
-
-  check('the match reached a winner', state?.winner !== null && state?.winner !== undefined,
-    `after ${turns} turns, winner ${state?.winner}, bank ${dry ? 'ran dry' : 'held'}`);
-  check('a correct answer earned a roll every time', rolls === asked, `${rolls} rolls from ${asked} answers`);
-  check('the winner has all four tokens home',
-    state?.winner !== null && state?.players?.[state.winner]?.tokens.every((t) => t === 57));
-  console.log(`        (${turns} turns, ${asked} questions asked)`);
-
-  const done = await rpc('finish_quiz_session', { p_session_id: match }, token);
-  check('finishing a match records it', done.body?.[0]?.run?.slug === 'ludo', JSON.stringify(done.body?.[0]?.run));
-
-  const rec = await call(`/rest/v1/mode_records?select=wins,runs&user_id=eq.${userId}&mode_slug=eq.ludo`, { token });
-  check('a ludo record row exists', rec.ok && rec.body?.length === 1, rec.raw.slice(0, 160));
-  check('the win column agrees with the board',
-    (rec.body?.[0]?.wins ?? 0) === (state?.winner === 0 ? 1 : 0),
-    `wins ${rec.body?.[0]?.wins}, winner seat ${state?.winner}`);
-
-  // ---- boundaries
-  const anonStart = await rpc('start_ludo_match', { p_category_id: null });
-  check('anon cannot start a match', !anonStart.ok, `status ${anonStart.status}`);
-
-  const cheatBoard = await call(`/rest/v1/quiz_sessions?id=eq.${match}`, {
-    method: 'PATCH', token,
-    body: { state: { slug: 'ludo', winner: 0, players: [] } },
+  const relogin = await call('/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    body: { email, password },
   });
-  check('a user cannot rewrite the board', !cheatBoard.ok, `status ${cheatBoard.status}`);
-
-  for (const fn of ['ludo_apply_move', 'ludo_bot_turns', 'ludo_legal_moves', 'ludo_bot_pick']) {
-    const sealed = await rpc(fn, {}, token);
-    check(`${fn} is not callable from a client`, !sealed.ok, `status ${sealed.status}`);
-  }
+  check('the deleted account cannot sign in again', !relogin.ok, `status ${relogin.status}`);
 }
 
 report();
+
+/* -------------------------------------------------------- retired sections
+   The full arcade and ludo gameplay suites (ladder banks and busts, survival
+   lives, a complete ludo match against the bots) were deleted along with the
+   features on 2026-08-18. If the arcade comes back, recover them from git:
+   `git log --diff-filter=D -- supabase/tests/e2e.mjs` — and re-grant the
+   entry points revoked in migration 20260818090000. */
 
 function report() {
   console.log('');

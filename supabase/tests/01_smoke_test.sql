@@ -186,15 +186,13 @@ begin
   end;
   assert ok, 'a finished session still accepted an answer';
 
-  -- ---- league membership -------------------------------------------------
+  -- ---- leagues are retired -----------------------------------------------
+  -- add_league_xp is a no-op since 20260818090000. Earning XP must no longer
+  -- create league rows; this locks the retirement in.
   select count(*) into v_count
   from public.league_members where user_id = v_alice;
-  assert v_count = 1, 'player was not placed in a league room';
-
-  select xp_earned into v_count
-  from public.league_members where user_id = v_alice;
-  assert v_count = 75,
-    format('league xp should mirror session xp (75), got %s', v_count);
+  assert v_count = 0,
+    format('leagues are retired but %s league_members rows appeared', v_count);
 
   -- ---- repeat questions must pay less -----------------------------------
   v_session2 := public.start_quiz_session('practice', v_cat, 8);
@@ -242,7 +240,7 @@ begin
   end;
   assert ok, 'weak_spots returned a session despite nothing being due or wrong';
 
-  raise notice 'game loop OK — xp, levels, streaks, leagues, replay protection, spaced repetition';
+  raise notice 'game loop OK — xp, levels, streaks, replay protection, spaced repetition, leagues retired';
 end
 $$;
 
@@ -598,6 +596,115 @@ begin
 end
 $$;
 
+-- ============================================================ session integrity
+
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+declare
+  v_cat    uuid := (select id from public.categories where slug = 'javascript');
+  v_s1     uuid;
+  v_s2     uuid;
+  v_s3     uuid;
+  v_s4     uuid;
+  v_row    record;
+  v_row2   record;
+  v_qid    uuid;
+  v_opt    uuid;
+  v_streak integer;
+  ok       boolean;
+begin
+  -- ---- only real modes can start ------------------------------------------
+  ok := false;
+  begin
+    perform public.start_quiz_session('survival', v_cat, 5);
+  exception when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'start_quiz_session accepted the retired survival mode';
+
+  ok := false;
+  begin
+    perform public.start_quiz_session('daily_challenge', v_cat, 5);
+  exception when others then ok := (sqlstate = '22023');
+  end;
+  assert ok, 'start_quiz_session accepted daily_challenge, which has no generator';
+
+  -- ---- finishing twice must not double anything ---------------------------
+  v_s1 := public.start_quiz_session('practice', v_cat, 3);
+  select question_id into v_qid from public.session_questions
+   where session_id = v_s1 order by position limit 1;
+  select id into v_opt from public.options
+   where question_id = v_qid and is_correct;
+  perform * from public.submit_answer(v_s1, v_qid, v_opt, 500);
+
+  select * into v_row  from public.finish_quiz_session(v_s1);
+  select * into v_row2 from public.finish_quiz_session(v_s1);
+  assert v_row2.answered_count = v_row.answered_count
+     and v_row2.correct_count  = v_row.correct_count
+     and v_row2.new_streak     = v_row.new_streak,
+    'a second finish reported different numbers than the first';
+
+  -- ---- a zero-answer finish moves nothing and leaves no history -----------
+  v_s2 := public.start_quiz_session('practice', v_cat, 3);
+  select current_streak into v_streak from public.profiles where id = auth.uid();
+
+  select * into v_row from public.finish_quiz_session(v_s2);
+  assert v_row.answered_count = 0, 'zero-answer finish reported answers';
+  assert v_row.new_streak = v_streak,
+    'closing an untouched session moved the daily streak';
+  assert v_row.unlocked = '{}', 'closing an untouched session unlocked a badge';
+  assert not exists (select 1 from public.quiz_sessions where id = v_s2),
+    'a zero-answer session left a 0/0 row in history';
+
+  -- ---- starting a quiz closes what the user walked away from --------------
+  v_s3 := public.start_quiz_session('practice', v_cat, 3);
+  select question_id into v_qid from public.session_questions
+   where session_id = v_s3 order by position limit 1;
+  select id into v_opt from public.options
+   where question_id = v_qid and is_correct;
+  perform * from public.submit_answer(v_s3, v_qid, v_opt, 500);
+
+  v_s4 := public.start_quiz_session('practice', v_cat, 3);
+  assert (select finished_at from public.quiz_sessions where id = v_s3) is not null,
+    'an abandoned session with answers was not closed by the next start';
+
+  perform public.start_quiz_session('practice', v_cat, 3);
+  assert not exists (select 1 from public.quiz_sessions where id = v_s4),
+    'an abandoned zero-answer session was not deleted by the next start';
+
+  raise notice 'session integrity OK — mode allow-list, idempotent finish, abandoned-session cleanup';
+end
+$$;
+
+-- ============================================================ leaderboard
+
+do $$
+declare
+  v_alice uuid := '11111111-1111-1111-1111-111111111111';
+  v_row   record;
+begin
+  -- Alice has finished well over three sessions by now, so she is ranked.
+  select * into v_row from public.get_leaderboard(true) where user_id = v_alice;
+  assert found, 'a player with 3+ finished quizzes is missing from the board';
+  assert v_row.is_me, 'the caller''s own row is not flagged is_me';
+  assert v_row.avg_score between 0 and 100,
+    format('avg_score %s is not a percentage', v_row.avg_score);
+  assert v_row.display_name = 'Alice', 'the board shows the wrong display name';
+
+  -- The floor: nobody with fewer than three finished quizzes is ranked.
+  assert not exists (select 1 from public.get_leaderboard(true) g where g.quizzes < 3),
+    'the board ranks players below the three-quiz floor';
+
+  -- Bob has never finished a quiz and must not appear.
+  assert not exists (
+    select 1 from public.get_leaderboard(true) g
+    where g.user_id = '22222222-2222-2222-2222-222222222222'
+  ), 'a player with no finished quizzes appears on the board';
+
+  raise notice 'leaderboard OK — ranked with floor, self-row flagged, names only';
+end
+$$;
+
 -- ============================================================ security
 
 -- Everything below runs as an ordinary signed-in user, not the owner.
@@ -713,11 +820,105 @@ begin
   end;
   assert ok, 'award_achievements is callable by a signed-in user';
 
+  -- The retired arcade and ludo entry points are sealed (20260818090000).
+  ok := false;
+  begin
+    perform public.start_arcade_run('ladder', null);
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'start_arcade_run is still callable though the arcade is retired';
+
+  ok := false;
+  begin
+    perform public.next_question(gen_random_uuid());
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'next_question is still callable though the arcade is retired';
+
+  ok := false;
+  begin
+    perform public.bank_ladder(gen_random_uuid());
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'bank_ladder is still callable though the arcade is retired';
+
+  ok := false;
+  begin
+    perform public.start_ludo_match(null);
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'start_ludo_match is still callable though ludo is retired';
+
+  ok := false;
+  begin
+    perform public.active_ludo_match();
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'active_ludo_match is still callable though ludo is retired';
+
+  ok := false;
+  begin
+    perform public.ludo_move(gen_random_uuid(), 0);
+  exception when insufficient_privilege then ok := true;
+  end;
+  assert ok, 'ludo_move is still callable though ludo is retired';
+
+  -- Another user's profile row is invisible (profiles went own-row-only).
+  select count(*) into n from public.profiles
+  where id <> auth.uid();
+  assert n = 0, format('RLS leak: another user can read %s other profiles', n);
+
+  -- A non-staff user cannot resolve reports — not even their own.
+  update public.reports set resolved_at = now() where user_id = auth.uid();
+  select count(*) into n from public.reports
+  where user_id = auth.uid() and resolved_at is not null;
+  assert n = 0, 'a non-staff user resolved a report';
+
   raise notice 'security OK — RLS isolation, column grants, staff gate, internal functions sealed';
 end
 $$;
 
+-- ---- staff can drain the reports inbox --------------------------------------
+
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
+
+do $$
+declare n integer;
+begin
+  update public.reports
+     set resolved_at = now(), resolved_by = auth.uid()
+   where resolved_at is null;
+
+  select count(*) into n from public.reports where resolved_at is null;
+  assert n = 0, format('%s reports remained unresolved after a staff sweep', n);
+
+  raise notice 'reports OK — staff can resolve, non-staff cannot';
+end
+$$;
+
+-- ---- a user can delete their own account ------------------------------------
+
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', false);
+
+do $$
+begin
+  perform public.delete_account();
+end
+$$;
+
 reset role;
+
+-- The deletion cascaded: no orphaned auth row, profile, or activity.
+do $$
+declare v_bob uuid := '22222222-2222-2222-2222-222222222222';
+begin
+  assert not exists (select 1 from auth.users       where id = v_bob),      'auth row survived delete_account';
+  assert not exists (select 1 from public.profiles  where id = v_bob),      'profile survived delete_account';
+  assert not exists (select 1 from public.reports   where user_id = v_bob), 'reports survived delete_account';
+
+  raise notice 'account deletion OK — auth row, profile and activity all cascade';
+end
+$$;
 
 -- Signed-out browsing: the catalogue is public, the questions are not.
 set role anon;
