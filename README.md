@@ -45,26 +45,27 @@ npx supabase start
 npx supabase status               # copy the API URL and anon key into mobile/.env
 ```
 
-**Against a hosted project:**
+**Against a hosted project:** follow [docs/hosted-setup.md](docs/hosted-setup.md)
+— it covers project creation, `db push`, seeding via `scripts/seed-hosted.sh`
+(psql-based; `supabase db query` cannot run multi-statement files), the auth
+dashboard checklist, and verification.
+
+Either way, sign up in the app first, then promote **your own** account and
+publish the seed bank:
 
 ```bash
-npx supabase login
-npx supabase link --project-ref <your-ref>
-npx supabase db push
-npx supabase db query --linked --file supabase/seed.sql
-```
-
-Either way, sign up in the app first, then publish the seed bank:
-
-```bash
+# local (docker exec); hosted uses psql + the pooler string — see docs/hosted-setup.md
+docker exec -i supabase_db_Learn-Quize psql -U postgres -d postgres \
+  -v email="'you@example.com'" -f - < supabase/dev/promote_staff.sql
 npx supabase db query --local --file supabase/dev/publish_seed.sql    # or --linked
 ```
 
-That makes the newest account staff and approves the seed questions under it.
-Until it runs, **every category shows zero questions and no quiz will start** —
-seed content deliberately lands as `in_review`. The approval gate is the
-product's whole quality story and seeding around it would be the first crack.
-On production, approve through the admin panel instead, so `approved_by`
+`promote_staff.sql` takes an explicit email on purpose; `publish_seed.sql`
+promotes nobody and refuses to run until a staff account exists. Until they
+run, **every category shows zero questions and no quiz will start** — seed
+content deliberately lands as `in_review`. The approval gate is the product's
+whole quality story and seeding around it would be the first crack. On
+production, approve through the admin panel once it exists, so `approved_by`
 records who actually reviewed the question.
 
 ### 2. App

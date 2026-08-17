@@ -1287,7 +1287,8 @@ begin
     raise notice '  % seed questions inserted as in_review.', v_count;
     raise notice '  No staff account exists yet, so nothing was published.';
     raise notice '';
-    raise notice '  Sign up in the app, then run:';
+    raise notice '  Sign up in the app, promote your account with';
+    raise notice '  supabase/dev/promote_staff.sql, then run:';
     raise notice '    npx supabase db query --local --file supabase/dev/publish_seed.sql';
     raise notice '';
   else
