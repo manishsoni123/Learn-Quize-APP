@@ -1,4 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import {
@@ -13,43 +14,65 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { signIn, signUp } from '../../src/lib/auth';
+import {
+  authErrorMessage,
+  resendConfirmation,
+  signIn,
+  signUp,
+} from '../../src/lib/auth';
 import { Icon, type IconName } from '../../src/components/icons';
-import { Button, Segmented } from '../../src/components/ui';
+import { Button, Segmented, Spacer, Txt } from '../../src/components/ui';
 import { colors, fonts, radius, space, tealGradient } from '../../src/theme';
 
 const MODES = ['Sign in', 'Create account'] as const;
 
 export default function SignInScreen() {
+  const router = useRouter();
   const [mode, setMode] = useState<string>(MODES[0]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when sign-up succeeded but the project wants the email confirmed. */
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+  const [resent, setResent] = useState(false);
 
   const isSignUp = mode === MODES[1];
+  // New accounts get the production rule (8+); sign-in stays permissive so
+  // older accounts are never locked out by a client-side check.
   const canSubmit =
-    email.includes('@') && password.length >= 6 && (!isSignUp || name.trim().length > 0);
+    email.includes('@') &&
+    password.length >= (isSignUp ? 8 : 6) &&
+    (!isSignUp || name.trim().length > 0);
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
       if (isSignUp) {
-        await signUp(email.trim(), password, name.trim());
+        const outcome = await signUp(email.trim(), password, name.trim());
+        // With email confirmation on, there is no session yet and no error —
+        // the only honest next step is "go check your inbox".
+        if (outcome === 'confirm') setAwaitingConfirm(true);
       } else {
         await signIn(email.trim(), password);
       }
       // The auth listener in AuthProvider handles navigation.
     } catch (e) {
-      // Surface what actually went wrong and what to do about it.
-      const message = e instanceof Error ? e.message : 'Something went wrong';
-      setError(
-        message.includes('Invalid login')
-          ? 'That email and password do not match an account.'
-          : message,
-      );
+      setError(authErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resend() {
+    setBusy(true);
+    try {
+      await resendConfirmation(email.trim());
+      setResent(true);
+    } catch (e) {
+      setError(authErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -91,57 +114,117 @@ export default function SignInScreen() {
 
             {/* -------------------------------------------------------- sheet */}
             <View style={styles.sheet}>
-              <Segmented
-                options={MODES}
-                value={mode}
-                onChange={(next) => {
-                  setMode(next);
-                  setError(null);
-                }}
-              />
+              {awaitingConfirm ? (
+                <>
+                  <View style={styles.confirmIcon}>
+                    <Icon name="mail" size={24} color={colors.brandDeep} />
+                  </View>
+                  <Txt variant="serifCard" style={styles.confirmTitle}>
+                    Check your email
+                  </Txt>
+                  <Txt variant="small" tone="soft" style={styles.confirmBody}>
+                    We sent a confirmation link to {email.trim()}. Open it on this
+                    device, then come back and sign in.
+                  </Txt>
+                  {error ? (
+                    <View style={styles.errorRow}>
+                      <Icon name="alert" size={13} color={colors.wrongInk} strokeWidth={2} />
+                      <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                  ) : null}
+                  <Button
+                    label={resent ? 'Sent again' : 'Resend email'}
+                    variant="secondary"
+                    onPress={resend}
+                    disabled={resent}
+                    loading={busy}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setAwaitingConfirm(false);
+                      setResent(false);
+                      setMode(MODES[0]);
+                      setError(null);
+                    }}
+                    style={styles.linkRow}
+                  >
+                    <Txt variant="small" tone="brand">
+                      Back to sign in
+                    </Txt>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Segmented
+                    options={MODES}
+                    value={mode}
+                    onChange={(next) => {
+                      setMode(next);
+                      setError(null);
+                    }}
+                  />
 
-              {isSignUp ? (
-                <Field
-                  label="Name"
-                  icon="person"
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="Your name"
-                  autoCapitalize="words"
-                  textContentType="name"
-                />
-              ) : null}
+                  {isSignUp ? (
+                    <Field
+                      label="Name"
+                      icon="person"
+                      value={name}
+                      onChangeText={setName}
+                      placeholder="Your name"
+                      autoCapitalize="words"
+                      textContentType="name"
+                    />
+                  ) : null}
 
-              <Field
-                label="Email"
-                icon="mail"
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@company.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                textContentType="emailAddress"
-              />
+                  <Field
+                    label="Email"
+                    icon="mail"
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="you@company.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    textContentType="emailAddress"
+                  />
 
-              <PasswordField
-                value={password}
-                onChangeText={setPassword}
-                isNew={isSignUp}
-              />
+                  <PasswordField
+                    value={password}
+                    onChangeText={setPassword}
+                    isNew={isSignUp}
+                  />
 
-              {error ? (
-                <View style={styles.errorRow}>
-                  <Icon name="alert" size={13} color={colors.wrongInk} strokeWidth={2} />
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              ) : null}
+                  {error ? (
+                    <View style={styles.errorRow}>
+                      <Icon name="alert" size={13} color={colors.wrongInk} strokeWidth={2} />
+                      <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                  ) : null}
 
-              <Button
-                label={isSignUp ? 'Create account' : 'Sign in'}
-                onPress={submit}
-                disabled={!canSubmit}
-                loading={busy}
-              />
+                  <Button
+                    label={isSignUp ? 'Create account' : 'Sign in'}
+                    onPress={submit}
+                    disabled={!canSubmit}
+                    loading={busy}
+                  />
+
+                  {!isSignUp ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Reset your password"
+                      onPress={() => router.push('/(auth)/forgot-password')}
+                      style={styles.linkRow}
+                    >
+                      <Txt variant="small" tone="soft">
+                        Forgot password?{' '}
+                        <Txt variant="small" tone="brand">
+                          Reset it
+                        </Txt>
+                      </Txt>
+                    </Pressable>
+                  ) : null}
+                </>
+              )}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -194,7 +277,7 @@ function PasswordField({
         <TextInput
           value={value}
           onChangeText={onChangeText}
-          placeholder="At least 6 characters"
+          placeholder={isNew ? 'At least 8 characters' : 'Your password'}
           secureTextEntry={!visible}
           autoCapitalize="none"
           textContentType={isNew ? 'newPassword' : 'password'}
@@ -303,4 +386,17 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: colors.wrongInk,
   },
+
+  confirmIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.pill,
+    backgroundColor: colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  confirmTitle: { textAlign: 'center' },
+  confirmBody: { textAlign: 'center', paddingHorizontal: space.sm },
+  linkRow: { alignItems: 'center', paddingVertical: space.sm },
 });

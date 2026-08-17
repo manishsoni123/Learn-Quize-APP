@@ -17,12 +17,13 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from '../src/lib/auth';
 import { isSupabaseConfigured } from '../src/lib/supabase';
+import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { Button, Loading, Screen, Spacer, Txt } from '../src/components/ui';
 import { colors, space } from '../src/theme';
 
@@ -43,23 +44,38 @@ const queryClient = new QueryClient({
  * Rendered inside AuthProvider so it can read the restored session.
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { session, loading } = useAuth();
+  const { session, loading, passwordRecovery } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const previousUser = useRef<string | null>(null);
 
   useEffect(() => {
     if (loading) return;
 
     void SplashScreen.hideAsync();
 
+    // A departing user's cached profile, history and scores must never flash
+    // for whoever signs in next on the same device.
+    const uid = session?.user.id ?? null;
+    if (previousUser.current && uid !== previousUser.current) {
+      queryClient.clear();
+    }
+    previousUser.current = uid;
+
     const inAuthGroup = segments[0] === '(auth)';
 
-    if (!session && !inAuthGroup) {
+    if (passwordRecovery && session) {
+      // Arrived through a reset link: the only sensible destination is the
+      // new-password screen, wherever the app happened to be.
+      if (segments[1] !== 'reset-password') {
+        router.replace('/(auth)/reset-password');
+      }
+    } else if (!session && !inAuthGroup) {
       router.replace('/(auth)/sign-in');
     } else if (session && inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [session, loading, segments, router]);
+  }, [session, loading, passwordRecovery, segments, router]);
 
   if (loading) return <Loading />;
 
@@ -68,6 +84,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 /** Shown when the project has not been pointed at a Supabase instance yet. */
 function SetupRequired() {
+  // This screen renders outside AuthGate, which is where the splash normally
+  // hides — without this, a misconfigured build hangs on the splash forever.
+  useEffect(() => {
+    void SplashScreen.hideAsync();
+  }, []);
+
   return (
     <Screen>
       <Screen contentStyle={{ justifyContent: 'center', padding: space.xl }}>
@@ -101,7 +123,7 @@ function SetupRequired() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Newsreader_500Medium,
     Newsreader_400Regular_Italic,
     InterTight_400Regular,
@@ -112,9 +134,10 @@ export default function RootLayout() {
     JetBrainsMono_500Medium,
   });
 
-  // The splash screen stays up until fonts resolve — a flash of fallback
-  // type would undo the whole identity.
-  if (!fontsLoaded) return null;
+  // The splash stays up until fonts resolve — a flash of fallback type would
+  // undo the identity. But a font-load *failure* must not hang the app
+  // forever: system fonts are the lesser evil.
+  if (!fontsLoaded && !fontError) return null;
 
   if (!isSupabaseConfigured) {
     return (
@@ -128,10 +151,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <StatusBar style="dark" />
-            <AuthGate>
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <StatusBar style="dark" />
+              <AuthGate>
               <Stack
                 screenOptions={{
                   headerShown: false,
@@ -149,9 +173,10 @@ export default function RootLayout() {
                 />
                 <Stack.Screen name="quiz/results" options={{ gestureEnabled: false }} />
               </Stack>
-            </AuthGate>
-          </AuthProvider>
-        </QueryClientProvider>
+              </AuthGate>
+            </AuthProvider>
+          </QueryClientProvider>
+        </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

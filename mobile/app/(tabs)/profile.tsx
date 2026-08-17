@@ -1,24 +1,77 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { setStatusBarStyle } from 'expo-status-bar';
+import React, { useCallback, useState } from 'react';
+import {
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { useHistory, useProfile } from '../../src/api/me';
 import { StreakChip } from '../../src/components/game';
 import { Icon } from '../../src/components/icons';
-import { Loading, Spacer } from '../../src/components/ui';
-import { signOut, useAuth } from '../../src/lib/auth';
+import { ErrorView, Loading, Spacer } from '../../src/components/ui';
+import { authErrorMessage, deleteAccount, signOut, useAuth } from '../../src/lib/auth';
 import { colors, fonts, radius, shadow, space, tealGradient } from '../../src/theme';
 
 export default function ProfileScreen() {
   const { userId } = useAuth();
   const profile = useProfile(userId);
   const history = useHistory(userId, 100);
+  const [deleting, setDeleting] = useState(false);
+
+  // The header band is deep teal: light status icons while this tab is
+  // focused, back to dark for the pale screens when it is not.
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle('light');
+      return () => setStatusBarStyle('dark');
+    }, []),
+  );
+
+  function confirmDelete() {
+    Alert.alert(
+      'Delete your account?',
+      'This permanently erases your account, history, scores and streak. It cannot be undone.',
+      [
+        { text: 'Keep my account', style: 'cancel' },
+        {
+          text: 'Delete forever',
+          style: 'destructive',
+          onPress: () => {
+            setDeleting(true);
+            deleteAccount()
+              .catch((e) => Alert.alert('Could not delete your account', authErrorMessage(e)))
+              .finally(() => setDeleting(false));
+            // On success the session vanishes and AuthGate routes to sign-in.
+          },
+        },
+      ],
+    );
+  }
 
   if (profile.isLoading) {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
         <Loading />
+      </SafeAreaView>
+    );
+  }
+
+  if (profile.isError) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <ErrorView
+          title="Could not load your profile"
+          detail="Check your connection and try again."
+          onRetry={() => void profile.refetch()}
+        />
       </SafeAreaView>
     );
   }
@@ -93,8 +146,26 @@ export default function ProfileScreen() {
               onPress={() => void signOut()}
               style={({ pressed }) => [styles.listRow, pressed && styles.pressed]}
             >
-              <Icon name="signOut" size={17} color={colors.wrong} strokeWidth={1.6} />
-              <Text style={styles.signOutLabel}>Sign out</Text>
+              <Icon name="signOut" size={17} color={colors.inkMid} strokeWidth={1.6} />
+              <Text style={styles.listLabel}>Sign out</Text>
+            </Pressable>
+            <View style={styles.listDivider} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Delete your account permanently"
+              accessibilityState={{ disabled: deleting, busy: deleting }}
+              disabled={deleting}
+              onPress={confirmDelete}
+              style={({ pressed }) => [
+                styles.listRow,
+                pressed && styles.pressed,
+                deleting && styles.listRowDisabled,
+              ]}
+            >
+              <Icon name="close" size={17} color={colors.wrong} strokeWidth={1.8} />
+              <Text style={styles.deleteLabel}>
+                {deleting ? 'Deleting…' : 'Delete account'}
+              </Text>
             </Pressable>
           </View>
 
@@ -182,7 +253,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
   },
   pressed: { opacity: 0.7 },
-  signOutLabel: { fontFamily: fonts.sansMedium, fontSize: 14, color: colors.wrong },
+  listDivider: { height: 1, backgroundColor: colors.muted, marginLeft: space.lg },
+  listRowDisabled: { opacity: 0.5 },
+  listLabel: { fontFamily: fonts.sansMedium, fontSize: 14, color: colors.ink },
+  deleteLabel: { fontFamily: fonts.sansMedium, fontSize: 14, color: colors.wrong },
 
   footer: {
     fontFamily: fonts.sans,

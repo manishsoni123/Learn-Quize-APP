@@ -1,8 +1,12 @@
 import 'react-native-url-polyfill/auto';
+import 'react-native-get-random-values';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import * as aesjs from 'aes-js';
 import Constants from 'expo-constants';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const configuredUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -54,6 +58,60 @@ function resolveDevHost(configured: string): string {
 const url = resolveDevHost(configuredUrl);
 
 /**
+ * Session storage: AES-256-CTR ciphertext in AsyncStorage, the per-entry key
+ * in the device keychain via expo-secure-store. Raw SecureStore cannot hold
+ * the session itself — its practical value limit (2 KB) is smaller than a
+ * Supabase session JSON — so this is the documented Supabase pattern for
+ * Expo: the keychain holds 32 bytes, AsyncStorage holds ciphertext, and a
+ * refresh token never sits on disk in the clear.
+ */
+class LargeSecureStore {
+  private async encrypt(key: string, value: string): Promise<string> {
+    const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    const cipher = new aesjs.ModeOfOperation.ctr(encryptionKey, new aesjs.Counter(1));
+    const encrypted = cipher.encrypt(aesjs.utils.utf8.toBytes(value));
+    await SecureStore.setItemAsync(key, aesjs.utils.hex.fromBytes(encryptionKey));
+    return aesjs.utils.hex.fromBytes(encrypted);
+  }
+
+  private async decrypt(key: string, value: string): Promise<string | null> {
+    const keyHex = await SecureStore.getItemAsync(key);
+    if (!keyHex) return null;
+    const cipher = new aesjs.ModeOfOperation.ctr(
+      aesjs.utils.hex.toBytes(keyHex),
+      new aesjs.Counter(1),
+    );
+    const decrypted = cipher.decrypt(aesjs.utils.hex.toBytes(value));
+    return aesjs.utils.utf8.fromBytes(decrypted);
+  }
+
+  async getItem(key: string): Promise<string | null> {
+    const encrypted = await AsyncStorage.getItem(key);
+    if (!encrypted) return null;
+    try {
+      return await this.decrypt(key, encrypted);
+    } catch {
+      // Unreadable ciphertext (e.g. keychain wiped on reinstall): treat as
+      // signed out rather than crashing the auth restore.
+      return null;
+    }
+  }
+
+  async setItem(key: string, value: string): Promise<void> {
+    const encrypted = await this.encrypt(key, value);
+    await AsyncStorage.setItem(key, encrypted);
+  }
+
+  async removeItem(key: string): Promise<void> {
+    await AsyncStorage.removeItem(key);
+    await SecureStore.deleteItemAsync(key);
+  }
+}
+
+// SecureStore does not exist on web (used only for Expo web previews).
+const sessionStorage = Platform.OS === 'web' ? AsyncStorage : new LargeSecureStore();
+
+/**
  * True once both env vars are present. The app checks this before rendering
  * anything that talks to the network, so a fresh clone shows setup
  * instructions instead of a stack trace.
@@ -66,10 +124,11 @@ export const supabase = createClient(
   anonKey || 'public-anon-key-placeholder',
   {
     auth: {
-      storage: AsyncStorage,
+      storage: sessionStorage,
       autoRefreshToken: true,
       persistSession: true,
-      // There is no browser to read a redirect fragment from.
+      // There is no browser to read a redirect fragment from; recovery links
+      // are parsed by hand in lib/auth.tsx.
       detectSessionInUrl: false,
     },
   },
