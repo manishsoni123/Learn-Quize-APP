@@ -9,17 +9,23 @@ import type {
   SubmitAnswerResult,
 } from '../lib/database.types';
 
-// These moved to lib/database.types so the Arcade lane can produce the same
-// shape from next_question(). Re-exported because the Focus player and its
-// components already import them from here.
+// Re-exported because the quiz player and its components import them from here.
 export type { PlayableOption, PlayableQuestion };
 
 export interface PlayableSession {
   id: string;
   mode: QuizMode;
   timeLimitS: number | null;
+  categoryName: string | null;
   questions: PlayableQuestion[];
 }
+
+/**
+ * A quiz is deliberately short: 10–15 questions, no more. The server accepts
+ * up to 50, so the product rule lives here where every session starts.
+ */
+export const MIN_QUESTIONS = 10;
+export const MAX_QUESTIONS = 15;
 
 /**
  * Starts a session server-side. The database picks the questions and locks
@@ -35,7 +41,7 @@ export function useStartSession() {
       const { data, error } = await supabase.rpc('start_quiz_session', {
         p_mode: input.mode,
         p_category_id: input.categoryId ?? null,
-        p_question_count: input.questionCount ?? 10,
+        p_question_count: Math.min(input.questionCount ?? MIN_QUESTIONS, MAX_QUESTIONS),
       });
       if (error) throw error;
       return data as unknown as string;
@@ -61,7 +67,7 @@ export function useSession(sessionId: string | undefined) {
     queryFn: async (): Promise<PlayableSession> => {
       const { data: session, error: sessionError } = await supabase
         .from('quiz_sessions')
-        .select('id, mode, time_limit_s')
+        .select('id, mode, time_limit_s, categories ( name )')
         .eq('id', sessionId!)
         .single();
       if (sessionError) throw sessionError;
@@ -97,6 +103,7 @@ export function useSession(sessionId: string | undefined) {
         id: session.id,
         mode: session.mode,
         timeLimitS: session.time_limit_s,
+        categoryName: (session as any).categories?.name ?? null,
         questions,
       };
     },
@@ -146,11 +153,10 @@ export function useFinishSession() {
       return row;
     },
     onSuccess: () => {
-      // XP, level, streak, league standing and badges all just moved.
+      // Streak, history and the review queue all just moved.
       qc.invalidateQueries({ queryKey: ['profile'] });
-      qc.invalidateQueries({ queryKey: ['league'] });
-      qc.invalidateQueries({ queryKey: ['achievements'] });
       qc.invalidateQueries({ queryKey: ['history'] });
+      qc.invalidateQueries({ queryKey: ['due'] });
     },
   });
 }

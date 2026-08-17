@@ -1,55 +1,95 @@
-import { Ionicons } from '@expo/vector-icons';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 
-import { colors, space } from '../../src/theme';
+import { Icon, type IconName } from '../../src/components/icons';
+import { colors, radius, shadow, space } from '../../src/theme';
+
+const TAB_ICON: Record<string, IconName> = {
+  index: 'home',
+  history: 'clock',
+  leaderboard: 'chart',
+  profile: 'person',
+};
+
+const TAB_LABEL: Record<string, string> = {
+  index: 'Home',
+  history: 'History',
+  leaderboard: 'Leaderboard',
+  profile: 'Profile',
+};
+
+/** The floating dark pill from the design — icon-only, active slot lit. */
+function FloatingTabBar({ state, navigation }: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.bar, { bottom: Math.max(insets.bottom, 10) + 8 }]}>
+      {state.routes.map((route, index) => {
+        const active = state.index === index;
+        return (
+          <Pressable
+            key={route.key}
+            accessibilityRole="tab"
+            accessibilityLabel={TAB_LABEL[route.name] ?? route.name}
+            accessibilityState={{ selected: active }}
+            onPress={() => {
+              if (!active) {
+                void Haptics.selectionAsync();
+                navigation.navigate(route.name);
+              }
+            }}
+            style={[styles.slot, active && styles.slotActive]}
+          >
+            <Icon
+              name={TAB_ICON[route.name] ?? 'home'}
+              size={19}
+              color={active ? colors.onDark : colors.onDarkSoft}
+            />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function TabsLayout() {
   return (
     <Tabs
+      tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.inkFaint,
         sceneStyle: { backgroundColor: colors.bg },
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.line,
-          borderTopWidth: 1,
-          height: 62,
-          paddingTop: space.sm,
-          paddingBottom: space.sm,
-        },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Learn',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="school-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="league"
-        options={{
-          title: 'League',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="trophy-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
-          ),
-        }}
-      />
+      <Tabs.Screen name="index" />
+      <Tabs.Screen name="history" />
+      <Tabs.Screen name="leaderboard" />
+      <Tabs.Screen name="profile" />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  bar: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: colors.brandInk,
+    borderRadius: radius.pill,
+    padding: space.sm,
+    ...shadow.float,
+  },
+  slot: {
+    width: 56,
+    height: 44,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  slotActive: { backgroundColor: 'rgba(255,255,255,0.14)' },
+});

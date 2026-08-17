@@ -1,118 +1,177 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 
-import { colors, duration, radius, space, trackColor, type } from '../theme';
-import type { Category, Difficulty } from '../lib/database.types';
-import { levelProgress } from '../lib/levels';
-import { Label, Pill, Txt, mono } from './ui';
-
-/* ------------------------------------------------------------------- xp bar */
-
-export function XpBar({ xp, compact = false }: { xp: number; compact?: boolean }) {
-  const progress = levelProgress(xp);
-  const width = useSharedValue(0);
-
-  useEffect(() => {
-    width.value = withTiming(progress.fraction, { duration: duration.slow });
-  }, [progress.fraction, width]);
-
-  const fill = useAnimatedStyle(() => ({ width: `${width.value * 100}%` }));
-
-  return (
-    <View>
-      <View style={styles.xpHeader}>
-        <View style={styles.levelChip}>
-          <Text style={styles.levelChipText}>{progress.level}</Text>
-        </View>
-        <View style={styles.flex}>
-          <View style={styles.track}>
-            <Animated.View style={[styles.trackFill, fill]} />
-          </View>
-        </View>
-      </View>
-      {compact ? null : (
-        <Txt variant="caption" tone="faint" style={styles.xpCaption}>
-          {progress.xpToNext.toLocaleString()} XP to level {progress.level + 1}
-        </Txt>
-      )}
-    </View>
-  );
-}
+import { colors, fonts, radius, shadow, space, trackTint } from '../theme';
+import type { Category } from '../lib/database.types';
+import { Icon } from './icons';
 
 /* ------------------------------------------------------------------ streak */
 
-export function StreakBadge({ days, atRisk }: { days: number; atRisk?: boolean }) {
+/** The warm tan streak chip. The only warm-coloured element in the app. */
+export function StreakChip({ days }: { days: number }) {
   return (
-    <View style={styles.streak}>
-      <Text style={styles.streakGlyph}>{days > 0 ? '🔥' : '💤'}</Text>
-      <View>
-        <Text style={styles.streakCount}>{days}</Text>
-        <Label color={atRisk ? colors.signal : colors.inkFaint}>
-          {days === 1 ? 'day' : 'days'}
-        </Label>
-      </View>
+    <View style={styles.streak} accessibilityLabel={`${days} day streak`}>
+      <Icon name="streak" size={13} color={colors.warm} strokeWidth={2} />
+      <Text style={styles.streakCount}>{days}</Text>
     </View>
   );
 }
 
-/* --------------------------------------------------------------- category */
+/* ---------------------------------------------------------------- fraction */
 
-export function CategoryCard({
+/**
+ * The signature score mark: numerator over a rule over denominator, set in
+ * Newsreader. Appears in the quiz header (7/10), on category rows (86/%),
+ * and gigantic on the results screen (12/15).
+ */
+export function Fraction({
+  top,
+  bottom,
+  size = 'md',
+  onDark = false,
+}: {
+  top: string;
+  bottom: string;
+  size?: 'sm' | 'md' | 'hero';
+  onDark?: boolean;
+}) {
+  const spec = {
+    sm: { top: 15, bottom: 11, rule: 20, ruleH: 1, gap: 2 },
+    md: { top: 26, bottom: 15, rule: 32, ruleH: 1.5, gap: 3 },
+    hero: { top: 88, bottom: 34, rule: 110, ruleH: 2, gap: 10 },
+  }[size];
+
+  const topColor = onDark ? colors.onDark : colors.brandInk;
+  const bottomColor = onDark ? colors.onDarkSoft : size === 'sm' ? colors.inkFaint : colors.inkSoft;
+  const ruleColor = onDark ? colors.cyan : size === 'sm' ? colors.inkDisabled : colors.brandInk;
+
+  return (
+    <View style={styles.fraction} accessibilityLabel={`${top} of ${bottom}`}>
+      <Text
+        style={{
+          fontFamily: fonts.serif,
+          fontSize: spec.top,
+          lineHeight: Math.round(spec.top * 1.05),
+          color: topColor,
+          fontVariant: ['tabular-nums'],
+        }}
+      >
+        {top}
+      </Text>
+      <View
+        style={{
+          width: spec.rule,
+          height: spec.ruleH,
+          backgroundColor: ruleColor,
+          marginVertical: spec.gap,
+        }}
+      />
+      <Text
+        style={{
+          fontFamily: fonts.serif,
+          fontSize: spec.bottom,
+          lineHeight: Math.round(spec.bottom * 1.15),
+          color: bottomColor,
+          fontVariant: ['tabular-nums'],
+        }}
+      >
+        {bottom}
+      </Text>
+    </View>
+  );
+}
+
+/* ---------------------------------------------------- per-question progress */
+
+export type SegmentResult = 'correct' | 'wrong' | 'current' | 'todo';
+
+/**
+ * One segment per question, coloured by how it went. The quiz's memory of
+ * itself — green for right, red for wrong, deep teal for now.
+ */
+export function SegmentedProgress({ segments }: { segments: SegmentResult[] }) {
+  const tint: Record<SegmentResult, string> = {
+    correct: colors.correct,
+    wrong: colors.wrong,
+    current: colors.brandDark,
+    todo: colors.lineNeutral,
+  };
+
+  return (
+    <View style={styles.segments}>
+      {segments.map((segment, i) => (
+        <View key={i} style={[styles.segment, { backgroundColor: tint[segment] }]} />
+      ))}
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------- monogram */
+
+export function Monogram({ name, trackSlug }: { name: string; trackSlug: string }) {
+  const tint = trackTint(trackSlug);
+  const letters = name
+    .split(/[\s/-]+/)
+    .map((word) => word.charAt(0))
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <View style={[styles.monogram, { backgroundColor: tint.bg }]}>
+      <Text style={[styles.monogramText, { color: tint.fg }]}>{letters}</Text>
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------- category */
+
+export function CategoryRow({
   category,
   trackSlug,
+  accuracy,
   onPress,
 }: {
   category: Category;
   trackSlug: string;
+  /** Rounded percentage from past sessions; null shows a chevron instead. */
+  accuracy: number | null;
   onPress: () => void;
 }) {
-  const accent = trackColor(trackSlug);
   const count = category.approved_question_count;
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={`${category.name}, ${count} questions${
+        accuracy !== null ? `, ${accuracy} percent average` : ''
+      }`}
       onPress={onPress}
-      style={({ pressed }) => [styles.categoryCard, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.categoryRow, pressed && styles.pressed]}
     >
-      <View style={[styles.categoryRail, { backgroundColor: accent }]} />
+      <Monogram name={category.name} trackSlug={trackSlug} />
       <View style={styles.flex}>
         <Text style={styles.categoryName} numberOfLines={1}>
           {category.name}
         </Text>
-        {category.description ? (
-          <Text style={styles.categoryDesc} numberOfLines={2}>
-            {category.description}
-          </Text>
-        ) : null}
-        <View style={styles.categoryMeta}>
-          <Text style={[styles.categoryCount, { color: accent }]}>
-            {count.toLocaleString()}
-          </Text>
-          <Text style={styles.categoryCountLabel}>
-            {count === 1 ? 'question' : 'questions'}
-          </Text>
-        </View>
+        <Text style={styles.categorySub} numberOfLines={1}>
+          {count.toLocaleString()} {count === 1 ? 'question' : 'questions'}
+        </Text>
       </View>
+      {accuracy !== null ? (
+        <Fraction top={String(accuracy)} bottom="%" size="sm" />
+      ) : (
+        <Icon name="chevronRight" size={16} color={colors.inkFaint} strokeWidth={2} />
+      )}
     </Pressable>
   );
 }
 
 /* ------------------------------------------------------------------- code */
 
-export function CodeBlock({ code, language }: { code: string; language?: string | null }) {
+export function CodeBlock({ code }: { code: string }) {
   return (
     <View style={styles.code}>
-      {language ? (
-        <View style={styles.codeLang}>
-          <Label>{language}</Label>
-        </View>
-      ) : null}
       {/* Code must never wrap — a broken line changes what the snippet means. */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <Text style={styles.codeText}>{code}</Text>
@@ -123,7 +182,7 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 
 /* ---------------------------------------------------------------- options */
 
-export type OptionState = 'idle' | 'selected' | 'correct' | 'wrong' | 'missed';
+export type OptionState = 'idle' | 'selected' | 'correct' | 'wrong' | 'missed' | 'dimmed';
 
 export function AnswerOption({
   label,
@@ -138,81 +197,76 @@ export function AnswerOption({
   disabled: boolean;
   onPress: () => void;
 }) {
-  const palette = {
-    idle: { border: colors.line, bg: colors.surface, text: colors.ink, key: colors.inkFaint },
-    selected: {
-      border: colors.accent,
-      bg: colors.accentDim,
-      text: colors.ink,
-      key: colors.accent,
-    },
-    correct: {
-      border: colors.correct,
-      bg: colors.correctDim,
-      text: colors.ink,
-      key: colors.correct,
-    },
-    wrong: { border: colors.wrong, bg: colors.wrongDim, text: colors.ink, key: colors.wrong },
-    // The right answer, revealed after the user picked something else.
-    missed: {
-      border: colors.correct,
-      bg: 'transparent',
-      text: colors.inkSoft,
-      key: colors.correct,
-    },
-  }[state];
+  const showCheck = state === 'correct' || state === 'missed';
+  const showCross = state === 'wrong';
+
+  const container = [
+    styles.option,
+    state === 'selected' && styles.optionSelected,
+    (state === 'correct' || state === 'missed') && styles.optionCorrect,
+    state === 'wrong' && styles.optionWrong,
+    state === 'dimmed' && styles.optionDimmed,
+  ];
+
+  const bodyColor =
+    state === 'correct' || state === 'missed'
+      ? colors.correctInk
+      : state === 'wrong'
+        ? colors.wrongInk
+        : colors.inkMid;
+
+  const tag = state === 'correct' ? 'CORRECT' : state === 'missed' ? 'ANSWER' : state === 'wrong' ? 'YOUR PICK' : null;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled, selected: state !== 'idle' }}
+      accessibilityState={{ disabled, selected: state === 'selected' }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.option,
-        { borderColor: palette.border, backgroundColor: palette.bg },
-        pressed && !disabled && styles.pressed,
-      ]}
+      style={({ pressed }) => [...container, pressed && !disabled && styles.pressed]}
     >
-      <View style={[styles.optionKey, { borderColor: palette.border }]}>
-        <Text style={[styles.optionKeyText, { color: palette.key }]}>{label}</Text>
-      </View>
-      <Text style={[styles.optionBody, { color: palette.text }]}>{body}</Text>
+      {showCheck || showCross ? (
+        <View
+          style={[
+            styles.optionKey,
+            { backgroundColor: showCheck ? colors.correct : colors.wrong },
+          ]}
+        >
+          <Icon
+            name={showCheck ? 'check' : 'close'}
+            size={14}
+            color={colors.onDark}
+            strokeWidth={2.2}
+          />
+        </View>
+      ) : (
+        <View style={[styles.optionKey, styles.optionKeyIdle]}>
+          <Text style={styles.optionKeyText}>{label}</Text>
+        </View>
+      )}
+      <Text style={[styles.optionBody, { color: bodyColor }]}>{body}</Text>
+      {tag ? (
+        <Text
+          style={[
+            styles.optionTag,
+            { color: showCross ? colors.wrongInk : colors.correctInk },
+          ]}
+        >
+          {tag}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
 
-/* ---------------------------------------------------------------- difficulty */
+/* --------------------------------------------------------------- why card */
 
-export function DifficultyPill({ difficulty }: { difficulty: Difficulty }) {
-  const map = {
-    easy: { color: colors.correct, bg: colors.correctDim },
-    medium: { color: colors.signal, bg: colors.signalDim },
-    hard: { color: colors.wrong, bg: colors.wrongDim },
-  }[difficulty];
-
+/** The explanation card. "Why" is set in Newsreader italic, like a margin note. */
+export function WhyCard({ children }: { children: string }) {
   return (
-    <Pill color={map.color} background={map.bg}>
-      {difficulty}
-    </Pill>
-  );
-}
-
-/* -------------------------------------------------------------- progress */
-
-export function QuestionProgress({ index, total }: { index: number; total: number }) {
-  return (
-    <View style={styles.progressRow}>
-      {Array.from({ length: total }, (_, i) => (
-        <View
-          key={i}
-          style={[
-            styles.progressPip,
-            i < index && styles.progressPipDone,
-            i === index && styles.progressPipCurrent,
-          ]}
-        />
-      ))}
+    <View style={styles.why}>
+      <Text style={styles.whyTitle}>Why</Text>
+      <Text style={styles.whyBody}>{children}</Text>
     </View>
   );
 }
@@ -222,7 +276,7 @@ export function QuestionProgress({ index, total }: { index: number; total: numbe
 export function TimerBar({ remaining, total }: { remaining: number; total: number }) {
   const fraction = Math.max(0, Math.min(remaining / Math.max(total, 1), 1));
   // Turns amber under 25% so the user feels the clock before it bites.
-  const tint = fraction > 0.25 ? colors.accent : colors.signal;
+  const tint = fraction > 0.25 ? colors.brand : colors.warn;
 
   return (
     <View style={styles.timerTrack}>
@@ -237,93 +291,122 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.995 }] },
 
-  xpHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  levelChip: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentDim,
+  streak: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.warmWash,
     borderWidth: 1,
-    borderColor: colors.accent,
+    borderColor: colors.warmLine,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+  },
+  streakCount: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 13,
+    color: colors.warmInk,
+    fontVariant: ['tabular-nums'],
+  },
+
+  fraction: { alignItems: 'center' },
+
+  segments: { flexDirection: 'row', gap: 4 },
+  segment: { flex: 1, height: 4, borderRadius: 2 },
+
+  monogram: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  levelChipText: { color: colors.accent, fontSize: 13, fontWeight: '800' },
-  track: {
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
-    overflow: 'hidden',
-  },
-  trackFill: { height: '100%', backgroundColor: colors.accent, borderRadius: radius.pill },
-  xpCaption: { marginTop: space.sm, marginLeft: 42 },
+  monogramText: { fontFamily: fonts.monoMedium, fontSize: 12 },
 
-  streak: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  streakGlyph: { fontSize: 22 },
-  streakCount: { color: colors.ink, fontSize: 18, fontWeight: '800', lineHeight: 21 },
-
-  categoryCard: {
+  categoryRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: space.md,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.line,
-    padding: space.lg,
-    overflow: 'hidden',
+    paddingVertical: 13,
+    paddingHorizontal: space.lg,
   },
-  categoryRail: { width: 3, borderRadius: radius.pill },
-  categoryName: { color: colors.ink, fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
-  categoryDesc: { color: colors.inkSoft, fontSize: 13, lineHeight: 18, marginTop: 3 },
-  categoryMeta: { flexDirection: 'row', alignItems: 'baseline', gap: 5, marginTop: space.md },
-  categoryCount: { fontSize: 14, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  categoryCountLabel: { color: colors.inkFaint, fontSize: 12 },
+  categoryName: { fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.ink },
+  categorySub: { fontFamily: fonts.sans, fontSize: 12, color: colors.inkSoft, marginTop: 1 },
 
   code: {
-    backgroundColor: colors.bg,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.line,
-    padding: space.md,
+    backgroundColor: colors.brandInk,
+    borderRadius: radius.md + 2,
+    paddingVertical: 13,
+    paddingHorizontal: 15,
     marginTop: space.md,
   },
-  codeLang: { marginBottom: space.sm },
-  codeText: { color: colors.accentInk, fontFamily: mono, fontSize: 13, lineHeight: 20 },
+  codeText: {
+    fontFamily: fonts.mono,
+    fontSize: 12.5,
+    lineHeight: 20,
+    color: colors.cyanSoft,
+  },
 
   option: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: space.md,
-    borderWidth: 1.5,
-    borderRadius: radius.md,
-    padding: space.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md + 2,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingVertical: 14,
+    paddingHorizontal: space.lg,
   },
-  optionKey: {
-    width: 26,
-    height: 26,
-    borderRadius: radius.sm,
+  optionSelected: { borderWidth: 1.5, borderColor: colors.brand },
+  optionCorrect: {
+    backgroundColor: colors.correctWash,
     borderWidth: 1.5,
+    borderColor: colors.correct,
+  },
+  optionWrong: {
+    backgroundColor: colors.wrongWash,
+    borderWidth: 1.5,
+    borderColor: colors.wrong,
+  },
+  optionDimmed: { opacity: 0.65 },
+  optionKey: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  optionKeyText: { fontSize: 12, fontWeight: '800' },
-  optionBody: { flex: 1, fontSize: 15, lineHeight: 22, paddingTop: 2 },
+  optionKeyIdle: { backgroundColor: colors.bg },
+  optionKeyText: { fontFamily: fonts.monoMedium, fontSize: 12.5, color: colors.brandDeep },
+  optionBody: { flex: 1, fontFamily: fonts.sans, fontSize: 15, lineHeight: 21 },
+  optionTag: { fontFamily: fonts.sansSemiBold, fontSize: 10, letterSpacing: 1 },
 
-  progressRow: { flexDirection: 'row', gap: 4 },
-  progressPip: {
-    flex: 1,
-    height: 3,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
+  why: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius.md + 2,
+    paddingVertical: 13,
+    paddingHorizontal: 15,
   },
-  progressPipDone: { backgroundColor: colors.accent },
-  progressPipCurrent: { backgroundColor: colors.accentInk },
+  whyTitle: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 15,
+    color: colors.brandDeep,
+    marginBottom: 4,
+  },
+  whyBody: { fontFamily: fonts.sans, fontSize: 13.5, lineHeight: 21, color: colors.inkMid },
 
   timerTrack: {
     height: 4,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
+    borderRadius: 2,
+    backgroundColor: colors.lineNeutral,
     overflow: 'hidden',
   },
-  timerFill: { height: '100%', borderRadius: radius.pill },
+  timerFill: { height: '100%', borderRadius: 2 },
 });

@@ -1,44 +1,38 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCategory } from '../../src/api/catalog';
-import { useStartSession } from '../../src/api/player';
-import { ErrorView, Label, Loading, Spacer, Txt } from '../../src/components/ui';
+import { MAX_QUESTIONS, MIN_QUESTIONS, useStartSession } from '../../src/api/player';
+import { Icon, type IconName } from '../../src/components/icons';
+import { ErrorView, Eyebrow, Loading, Spacer, Txt } from '../../src/components/ui';
 import type { QuizMode } from '../../src/lib/database.types';
-import { colors, radius, space, trackColor } from '../../src/theme';
+import { colors, fonts, radius, shadow, space, trackTint } from '../../src/theme';
 
 interface ModeOption {
   mode: QuizMode;
   title: string;
   detail: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: IconName;
   count: number;
 }
 
+/** Every quiz stays short on purpose: 10–15 questions, never more. */
 const MODES: ModeOption[] = [
   {
     mode: 'practice',
     title: 'Practice',
-    detail: 'Untimed. Explanation after every answer.',
-    icon: 'book-outline',
-    count: 10,
+    detail: `${MIN_QUESTIONS} questions · untimed · why, after every answer`,
+    icon: 'book',
+    count: MIN_QUESTIONS,
   },
   {
     mode: 'timed_test',
     title: 'Timed test',
-    detail: '20 questions, 20 minutes, results at the end.',
-    icon: 'timer-outline',
-    count: 20,
-  },
-  {
-    mode: 'rapid_fire',
-    title: 'Rapid fire',
-    detail: '60 seconds. As many as you can.',
-    icon: 'flash-outline',
-    count: 20,
+    detail: `${MAX_QUESTIONS} questions · ${MAX_QUESTIONS} minutes · like the real thing`,
+    icon: 'timer',
+    count: MAX_QUESTIONS,
   },
 ];
 
@@ -64,8 +58,8 @@ export default function CategoryScreen() {
       const message = e instanceof Error ? e.message : '';
       setError(
         message.includes('no questions available')
-          ? 'This category has no approved questions yet. Try another one.'
-          : 'Could not start that session. Check your connection and try again.',
+          ? 'This topic has no questions yet. Try another one.'
+          : 'Could not start that quiz. Check your connection and try again.',
       );
     }
   }
@@ -81,16 +75,13 @@ export default function CategoryScreen() {
   if (query.isError || !query.data) {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ErrorView
-          title="Category not found"
-          onRetry={() => void query.refetch()}
-        />
+        <ErrorView title="Topic not found" onRetry={() => void query.refetch()} />
       </SafeAreaView>
     );
   }
 
   const { category, track } = query.data;
-  const accent = trackColor(track.slug);
+  const tint = trackTint(track.slug);
   const empty = category.approved_question_count === 0;
 
   return (
@@ -101,15 +92,15 @@ export default function CategoryScreen() {
           accessibilityLabel="Go back"
           onPress={() => router.back()}
           style={styles.back}
-          hitSlop={12}
+          hitSlop={8}
         >
-          <Ionicons name="chevron-back" size={22} color={colors.inkSoft} />
+          <Icon name="chevronLeft" size={18} color={colors.inkMid} strokeWidth={2} />
         </Pressable>
 
-        <Spacer h={space.md} />
-        <Label color={accent}>{track.name}</Label>
+        <Spacer h={space.lg + 2} />
+        <Eyebrow>{`${track.name} track`}</Eyebrow>
         <Spacer h={space.sm} />
-        <Txt variant="display">{category.name}</Txt>
+        <Text style={styles.title}>{category.name}</Text>
         {category.description ? (
           <>
             <Spacer h={space.sm} />
@@ -126,14 +117,15 @@ export default function CategoryScreen() {
         {error ? (
           <>
             <Spacer h={space.lg} />
-            <Txt variant="small" tone="wrong">
-              {error}
-            </Txt>
+            <View style={styles.errorRow}>
+              <Icon name="alert" size={13} color={colors.wrongInk} strokeWidth={2} />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
           </>
         ) : null}
 
         <Spacer h={space.xl} />
-        <Label>Choose a mode</Label>
+        <Eyebrow color={colors.inkFaint}>Choose how to practice</Eyebrow>
         <Spacer h={space.md} />
 
         <View style={styles.modeList}>
@@ -141,6 +133,7 @@ export default function CategoryScreen() {
             <Pressable
               key={option.mode}
               accessibilityRole="button"
+              accessibilityLabel={`${option.title}. ${option.detail}`}
               disabled={empty || startSession.isPending}
               onPress={() => void start(option)}
               style={({ pressed }) => [
@@ -149,17 +142,14 @@ export default function CategoryScreen() {
                 (empty || startSession.isPending) && styles.modeDisabled,
               ]}
             >
-              <View style={[styles.modeIcon, { borderColor: accent }]}>
-                <Ionicons name={option.icon} size={20} color={accent} />
+              <View style={[styles.modeIcon, { backgroundColor: tint.bg }]}>
+                <Icon name={option.icon} size={19} color={tint.fg} />
               </View>
               <View style={styles.flex}>
                 <Txt variant="bodyStrong">{option.title}</Txt>
-                <Spacer h={space.xs} />
-                <Txt variant="caption" tone="faint">
-                  {option.detail}
-                </Txt>
+                <Text style={styles.modeDetail}>{option.detail}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.inkFaint} />
+              <Icon name="chevronRight" size={16} color={colors.inkFaint} strokeWidth={2} />
             </Pressable>
           ))}
         </View>
@@ -171,8 +161,8 @@ export default function CategoryScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   screen: { flex: 1, backgroundColor: colors.bg },
-  body: { padding: space.lg, paddingBottom: space.xxxl },
-  pressed: { opacity: 0.85 },
+  body: { padding: space.xl, paddingTop: space.md, paddingBottom: space.xxxl },
+  pressed: { opacity: 0.9 },
 
   back: {
     width: 38,
@@ -185,7 +175,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  modeList: { gap: space.md },
+  title: { fontFamily: fonts.serif, fontSize: 32, lineHeight: 38, color: colors.ink },
+
+  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  errorText: {
+    flex: 1,
+    fontFamily: fonts.sans,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: colors.wrongInk,
+  },
+
+  modeList: { gap: space.md - 2 },
   mode: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -195,14 +196,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     padding: space.lg,
+    ...shadow.card,
   },
   modeDisabled: { opacity: 0.45 },
   modeIcon: {
     width: 42,
     height: 42,
     borderRadius: radius.md,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modeDetail: { fontFamily: fonts.sans, fontSize: 12, color: colors.inkSoft, marginTop: 2 },
 });

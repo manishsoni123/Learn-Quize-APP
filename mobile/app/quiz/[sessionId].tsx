@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,14 +14,18 @@ import {
 import {
   AnswerOption,
   CodeBlock,
-  DifficultyPill,
-  QuestionProgress,
+  Fraction,
+  SegmentedProgress,
   TimerBar,
+  WhyCard,
   type OptionState,
+  type SegmentResult,
 } from '../../src/components/game';
-import { Button, ErrorView, Loading, Spacer, Txt } from '../../src/components/ui';
+import { Icon } from '../../src/components/icons';
+import { Button, ErrorView, Eyebrow, Loading, Spacer, Txt } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { colors, radius, space } from '../../src/theme';
+import { modeLabel } from '../../src/lib/labels';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -39,7 +42,8 @@ export default function QuizScreen() {
   const [index, setIndex] = useState(0);
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [xpForQuestion, setXpForQuestion] = useState(0);
+  /** Per-question outcome, drives the segmented progress colours. */
+  const [outcomes, setOutcomes] = useState<('correct' | 'wrong')[]>([]);
   const [remaining, setRemaining] = useState<number | null>(null);
 
   const questionStartedAt = useRef(Date.now());
@@ -59,7 +63,11 @@ export default function QuizScreen() {
       const result = await finishSession.mutateAsync(sessionId);
       router.replace({
         pathname: '/quiz/results',
-        params: { payload: JSON.stringify(result) },
+        params: {
+          payload: JSON.stringify(result),
+          category: session.data?.categoryName ?? '',
+          mode: session.data?.mode ?? '',
+        },
       });
     } catch {
       finishing.current = false;
@@ -68,7 +76,7 @@ export default function QuizScreen() {
         'Your answers are recorded. Check your connection and try again.',
       );
     }
-  }, [finishSession, router, sessionId]);
+  }, [finishSession, router, sessionId, session.data]);
 
   /* ------------------------------------------------------------ whole-run clock */
 
@@ -98,9 +106,10 @@ export default function QuizScreen() {
     const correct = question.options.find((o) => o.id === optionId)?.is_correct ?? false;
 
     // Feedback lands immediately; the network call catches up behind it. The
-    // server is still the authority on XP — this only drives the colours.
+    // server is still the authority on scoring — this only drives the colours.
     setChosenId(optionId);
     setRevealed(true);
+    setOutcomes((prev) => [...prev, correct ? 'correct' : 'wrong']);
     void Haptics.notificationAsync(
       correct
         ? Haptics.NotificationFeedbackType.Success
@@ -108,17 +117,15 @@ export default function QuizScreen() {
     );
 
     try {
-      const result = await submitAnswer.mutateAsync({
+      await submitAnswer.mutateAsync({
         sessionId: sessionId!,
         questionId: question.id,
         optionId,
         timeMs: elapsed,
       });
-      setXpForQuestion(result.xp_awarded);
     } catch {
       // Already answered, or offline. Neither is worth interrupting the run
       // for — the results screen reads the authoritative totals.
-      setXpForQuestion(0);
     }
   }
 
@@ -130,7 +137,6 @@ export default function QuizScreen() {
     setIndex((i) => i + 1);
     setChosenId(null);
     setRevealed(false);
-    setXpForQuestion(0);
     questionStartedAt.current = Date.now();
   }
 
@@ -162,12 +168,22 @@ export default function QuizScreen() {
     ]);
   }
 
+  const segments: SegmentResult[] = useMemo(
+    () =>
+      Array.from({ length: total }, (_, i) => {
+        if (i < outcomes.length) return outcomes[i];
+        if (i === index) return 'current';
+        return 'todo';
+      }),
+    [total, outcomes, index],
+  );
+
   const optionState = useMemo(
     () =>
       (optionId: string, isCorrect: boolean): OptionState => {
         if (!revealed) return chosenId === optionId ? 'selected' : 'idle';
         if (optionId === chosenId) return isCorrect ? 'correct' : 'wrong';
-        return isCorrect ? 'missed' : 'idle';
+        return isCorrect ? 'missed' : 'dimmed';
       },
     [revealed, chosenId],
   );
@@ -177,7 +193,7 @@ export default function QuizScreen() {
   if (session.isLoading) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <Loading label="Building your set" />
+        <Loading label="Preparing your questions" />
       </SafeAreaView>
     );
   }
@@ -197,6 +213,12 @@ export default function QuizScreen() {
   const wasCorrect =
     revealed && question.options.find((o) => o.id === chosenId)?.is_correct === true;
 
+  const context = [
+    session.data?.categoryName ?? 'Mixed',
+    modeLabel(session.data?.mode ?? ''),
+    question.difficulty,
+  ].join(' · ');
+
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       {/* ------------------------------------------------------------ chrome */}
@@ -205,49 +227,45 @@ export default function QuizScreen() {
           accessibilityRole="button"
           accessibilityLabel="Leave quiz"
           onPress={confirmQuit}
-          hitSlop={12}
+          style={styles.roundButton}
+          hitSlop={8}
         >
-          <Ionicons name="close" size={24} color={colors.inkSoft} />
+          <Icon name="close" size={16} color={colors.inkMid} />
         </Pressable>
-        <View style={styles.flex}>
-          <QuestionProgress index={index} total={total} />
-        </View>
-        <Txt variant="caption" tone="faint">
-          {index + 1}/{total}
-        </Txt>
+        <Fraction top={String(index + 1)} bottom={String(total)} size="md" />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Report this question"
+          onPress={report}
+          style={styles.roundButton}
+          hitSlop={8}
+        >
+          <Icon name="flag" size={15} color={colors.inkMid} />
+        </Pressable>
       </View>
 
-      {timeLimit ? (
-        <View style={styles.timerWrap}>
-          <TimerBar remaining={remaining ?? timeLimit} total={timeLimit} />
-        </View>
-      ) : null}
+      <View style={styles.progressWrap}>
+        <SegmentedProgress segments={segments} />
+        {timeLimit ? (
+          <>
+            <Spacer h={space.sm} />
+            <TimerBar remaining={remaining ?? timeLimit} total={timeLimit} />
+          </>
+        ) : null}
+      </View>
 
       {/* ---------------------------------------------------------- question */}
       <ScrollView
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.questionMeta}>
-          <DifficultyPill difficulty={question.difficulty} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Report this question"
-            onPress={report}
-            hitSlop={10}
-          >
-            <Ionicons name="flag-outline" size={16} color={colors.inkFaint} />
-          </Pressable>
-        </View>
+        <Eyebrow>{context}</Eyebrow>
+        <Spacer h={space.sm + 2} />
+        <Txt variant="question">{question.body}</Txt>
 
-        <Spacer h={space.md} />
-        <Txt variant="heading">{question.body}</Txt>
+        {question.code_snippet ? <CodeBlock code={question.code_snippet} /> : null}
 
-        {question.code_snippet ? (
-          <CodeBlock code={question.code_snippet} language={question.code_language} />
-        ) : null}
-
-        <Spacer h={space.xl} />
+        <Spacer h={space.lg + 2} />
         <View style={styles.options}>
           {question.options.map((option, i) => (
             <AnswerOption
@@ -264,28 +282,16 @@ export default function QuizScreen() {
         {/* ------------------------------------------------------ explanation */}
         {revealed ? (
           <>
-            <Spacer h={space.xl} />
-            <View
-              style={[
-                styles.explain,
-                { borderColor: wasCorrect ? colors.correct : colors.wrong },
-              ]}
-            >
-              <View style={styles.explainHead}>
-                <Txt variant="bodyStrong" tone={wasCorrect ? 'accent' : 'wrong'}>
-                  {wasCorrect ? 'Correct' : 'Not quite'}
-                </Txt>
-                {xpForQuestion > 0 ? (
-                  <Txt variant="bodyStrong" tone="accent">
-                    +{xpForQuestion} XP
-                  </Txt>
-                ) : null}
-              </View>
-              <Spacer h={space.sm} />
-              <Txt variant="small" tone="soft">
-                {question.explanation}
-              </Txt>
-            </View>
+            <Spacer h={space.lg} />
+            <WhyCard>{question.explanation}</WhyCard>
+          </>
+        ) : null}
+        {revealed && !wasCorrect ? (
+          <>
+            <Spacer h={space.sm} />
+            <Txt variant="caption" tone="soft">
+              This one will come back for review.
+            </Txt>
           </>
         ) : null}
       </ScrollView>
@@ -294,7 +300,7 @@ export default function QuizScreen() {
       {revealed ? (
         <View style={styles.footer}>
           <Button
-            label={index + 1 >= total ? 'See results' : 'Next question'}
+            label={index + 1 >= total ? 'See your score' : 'Next question'}
             onPress={next}
             loading={finishSession.isPending}
           />
@@ -305,39 +311,34 @@ export default function QuizScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   screen: { flex: 1, backgroundColor: colors.bg },
 
   top: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.lg,
-    paddingHorizontal: space.lg,
+    justifyContent: 'space-between',
+    paddingHorizontal: space.xl,
     paddingTop: space.md,
-    paddingBottom: space.sm,
   },
-  timerWrap: { paddingHorizontal: space.lg, paddingBottom: space.sm },
-
-  body: { padding: space.lg, paddingBottom: space.xxxl },
-  questionMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  options: { gap: space.md },
-
-  explain: {
+  roundButton: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderLeftWidth: 3,
     borderWidth: 1,
-    borderTopColor: colors.line,
-    borderRightColor: colors.line,
-    borderBottomColor: colors.line,
-    padding: space.lg,
+    borderColor: colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  explainHead: { flexDirection: 'row', justifyContent: 'space-between' },
+
+  progressWrap: { paddingHorizontal: space.xl, paddingTop: space.md },
+
+  body: { paddingHorizontal: space.xl, paddingTop: space.xl, paddingBottom: space.xxxl },
+  options: { gap: space.md - 2 },
 
   footer: {
-    padding: space.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    backgroundColor: colors.surface,
+    paddingHorizontal: space.xl,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
   },
 });

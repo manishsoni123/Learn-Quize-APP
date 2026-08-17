@@ -1,10 +1,14 @@
 # Learn-Quize
 
-A gamified quiz and practice app for developers, AI/ML engineers and traders.
-React Native + Expo on the front, Supabase behind it. Android first; the same
-codebase builds for iOS whenever the Apple account is bought.
+A quiz practice app for developers, AI/ML engineers and traders. Short quizzes
+— 10 to 15 questions, never more — a score at the end, and a history of every
+session. React Native + Expo on the front, Supabase behind it. Android first;
+the same codebase builds for iOS whenever the Apple account is bought.
 
-**Status:** database and mobile app built and verified. Admin panel not started.
+**Status:** database and mobile app built and verified. Admin panel not
+started. The Arcade lane (Ladder, Survival, Blitz, Ludo) and weekly leagues
+are **disabled in the app** — the schema and tests remain, see
+[Disabled features](#disabled-features).
 
 ---
 
@@ -18,9 +22,9 @@ supabase/
 mobile/
   app/                 screens (expo-router, file-based)
   src/theme/           design tokens — every colour and spacing value
-  src/lib/             supabase client, auth, level curve
+  src/lib/             supabase client, auth, domain types
   src/api/             typed data layer over the three RPCs
-  src/components/      ui primitives + game components
+  src/components/      ui primitives + quiz components
 content/
   question-template.csv  the shape the team fills in
 ```
@@ -226,76 +230,61 @@ Every question records `source`, `source_url` and `source_licence`. Keep those
 populated on bulk imports; it is the only way to answer a licensing question
 later without guesswork.
 
-## Two lanes
+## The product
 
-**Focus** is the study tool: untimed, explanations on every answer, spaced
-repetition, and a whole question set fetched up front so a dropped connection
-mid-session costs nothing.
+One thing, done properly: short practice quizzes for interview preparation and
+general self-improvement.
 
-**Arcade** puts something at stake. Same questions, same XP economy, different
-contract with the player — and its own palette, because crossing between them
-should feel like walking into a different room.
+- **Every quiz is 10–15 questions.** The client enforces it
+  (`MIN_QUESTIONS`/`MAX_QUESTIONS` in `src/api/player.ts`) even though the
+  server accepts up to 50 — short sessions are a product rule, not a limit.
+- **Two ways to practice a topic**: Practice (10 questions, untimed,
+  explanation after every answer) and Timed test (15 questions, 15 minutes).
+- **A score at the end of every quiz** — the results screen leads with the
+  percentage, not XP.
+- **History** — a dedicated tab with every finished session, average and best
+  scores.
+- **Review** — questions you miss come back on a widening spaced-repetition
+  schedule; the home screen offers them when they are due.
+- **Leaderboard** — quiet and score-based: average quiz score, weekly (resets
+  Monday) or all-time. No XP, no levels. Served by the `get_leaderboard()`
+  RPC (`migrations/20260817130000_leaderboard.sql`), which exposes only
+  display names and aggregate percentages.
 
-| Mode | Rules | Scored on |
-|---|---|---|
-| **Ladder** | Ten rungs, each worth more. After every correct answer: bank, or risk it all on the next one. | XP banked |
-| **Survival** | Three lives, difficulty escalating, runs until you die. | Questions survived |
-| **Blitz** | Sixty seconds. | Correct answers |
-| **Ludo** | The real board against three bots. Answer correctly to earn your roll. | Matches won |
+XP, levels and streak still accrue server-side (`submit_answer` is untouched);
+the UI simply leads with scores and shows the streak as a small chip.
 
-**Ludo** is real Ludo, not a quiz wearing a board: a six to leave the yard,
-another turn on a six with three in a row forfeiting, capture on unsafe
-squares, the four starts and four stars safe, home hit exactly, all four tokens
-home to win. Nobody needs teaching, which is the entire point.
+### The design
 
-Token positions are stored **relative to each player's own start** — `-1` yard,
-`0–51` track, `52–56` home column, `57` home — so a move is `pos + roll` for
-every seat and the seat offset is applied in exactly one place: deciding
-whether two tokens share an absolute square. Absolute storage would push
-"whose turn is it" into every rule.
+The UI implements the approved Claude Design canvas ("Quize App Design
+Phase 1" → `Learn-Quize App.dc.html`), built on the Dynatech design system:
+deep teal-blue palette, **Newsreader** (editorial serif, greetings and every
+number), **Inter Tight** (UI text), **JetBrains Mono** (code, monograms) —
+loaded via `@expo-google-fonts/*`. Signature elements: the stacked-fraction
+score mark (12 over a rule over 15), per-question progress segments coloured
+by correctness, and the floating dark pill tab bar. Tokens live in
+`mobile/src/theme/index.ts`; the stroke icon set is
+`mobile/src/components/icons.tsx`.
 
-The die is rolled inside `apply_mode_rules`, never on the phone. Bots simulate
-their answers rather than drawing questions — three bots taking a card each per
-turn would empty a category in one match — and all three seats resolve in a
-single `ludo_move` call, so a turn costs one round trip and returns a log to
-animate. `src/lib/ludoBoard.ts` mirrors the move rules so the board can light
-up tappable tokens, but it is advisory: `ludo_move` re-derives the legal set
-and refuses anything outside it.
+## Disabled features
 
-Matches run long, so they are **resumable** — the board lives in
-`quiz_sessions.state` and Arcade offers an unfinished one back rather than
-silently replacing it.
+The Arcade lane (Ladder, Survival, Blitz, Ludo) and weekly leagues were built
+and then **removed from the app** to keep the product a focused quiz app. The
+removal is client-side only:
 
-Ladder is the one worth understanding, because it is the only mode where
-`submit_answer` awards nothing. Its `defer_xp` rule keeps every point riding on
-the run; `bank_ladder()` is the sole path by which any of it reaches a profile.
-A bust therefore genuinely pays zero — and if that ever quietly stops being
-true, the mode has no point, which is why three separate tests assert it.
-
-Arcade streams questions one at a time through `next_question()` rather than
-picking a set up front. Survival has no length to pick, and streaming is also
-what lets the server choose each question knowing how the run is going.
-`session_questions` still gates every answer, so the anti-replay guarantee is
-unchanged.
-
-Mode parameters — lives, durations, the rung payout curve — live in the
-`game_modes` table rather than in code, because those are the numbers that get
-tuned constantly once real people play. Behaviour is code; the numbers are rows.
+- The database schema, functions, RLS and tests for arcade/ludo/leagues are
+  all still in `supabase/migrations` and still pass `tests/run.sh`.
+- The app screens, components and API hooks were deleted in one commit — `git
+  log -- mobile/app/arcade` finds them if the features ever come back.
+- Old arcade sessions still render in History (labelled "Arcade").
 
 ## Next
 
 1. **Admin panel** (Next.js on Vercel) — editor, approval queue, CSV import,
-   reports inbox. The team is the launch bottleneck, so this unblocks more than
-   any app feature does — and Arcade has made that worse, not better. Survival
-   is endless but the bank is 120 questions, so a good run empties a category
-   in one sitting, after which the `first_time` multiplier drops payouts to 30%
-   and the game reads as having stopped rewarding you.
+   reports inbox. The team is the launch bottleneck, so this unblocks more
+   than any app feature does.
 2. **New question formats** — Order the Code (Parsons), Spot the Bug, Match
-   Pairs, Fill the Blank, Chart Reader. The renderer in
-   `src/components/questions/` dispatches on `question.kind` and
-   `questions.payload` is already there to hold them, so each is a new file and
-   one line in a switch. They are blocked on the admin panel, not on the app:
-   nobody is hand-writing a Parsons problem into a CSV.
-2. Push notifications for the streak reminder.
-3. Daily challenge generation (a cron that fills `daily_challenges`).
-4. Weekly league rollover (promotion/relegation cron).
+   Pairs, Fill the Blank, Chart Reader. `questions.payload` is already there
+   to hold them. They are blocked on the admin panel, not on the app: nobody
+   is hand-writing a Parsons problem into a CSV.
+3. Push notifications for the streak reminder.

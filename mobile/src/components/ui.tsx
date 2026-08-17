@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,9 +13,7 @@ import {
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 
-import { colors, monoFamily, radius, space, type } from '../theme';
-
-export const mono = Platform.select(monoFamily);
+import { colors, fonts, radius, shadow, space, type } from '../theme';
 
 /* ------------------------------------------------------------------ layout */
 
@@ -66,14 +63,27 @@ export const Divider = () => <View style={styles.divider} />;
 
 /* -------------------------------------------------------------- typography */
 
-type TextTone = 'default' | 'soft' | 'faint' | 'accent' | 'wrong';
+type TextTone =
+  | 'default'
+  | 'mid'
+  | 'soft'
+  | 'faint'
+  | 'brand'
+  | 'correct'
+  | 'wrong'
+  | 'onDark'
+  | 'onDarkSoft';
 
 const toneColor: Record<TextTone, string> = {
   default: colors.ink,
+  mid: colors.inkMid,
   soft: colors.inkSoft,
   faint: colors.inkFaint,
-  accent: colors.accent,
-  wrong: colors.wrong,
+  brand: colors.brandDeep,
+  correct: colors.correctInk,
+  wrong: colors.wrongInk,
+  onDark: colors.onDark,
+  onDarkSoft: colors.onDarkSoft,
 };
 
 export function Txt({
@@ -92,21 +102,23 @@ export function Txt({
   return (
     <Text
       numberOfLines={numberOfLines}
-      style={[
-        type[variant] as TextStyle,
-        { color: toneColor[tone] },
-        variant === 'mono' && { fontFamily: mono },
-        style,
-      ]}
+      style={[type[variant] as TextStyle, { color: toneColor[tone] }, style]}
     >
       {children}
     </Text>
   );
 }
 
-export function Label({ children, color }: { children: React.ReactNode; color?: string }) {
+/** Uppercase kicker label — "QUICK QUIZ", "DEVELOPER TRACK". */
+export function Eyebrow({
+  children,
+  color = colors.brandDeep,
+}: {
+  children: React.ReactNode;
+  color?: string;
+}) {
   return (
-    <Text style={[type.label as TextStyle, { color: color ?? colors.inkFaint }]}>
+    <Text style={[type.eyebrow as TextStyle, { color }]}>
       {String(children).toUpperCase()}
     </Text>
   );
@@ -124,12 +136,15 @@ export function Button({
 }: {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'ghost';
+  /** `light` is the white button used on dark teal grounds. */
+  variant?: 'primary' | 'secondary' | 'light' | 'ghost';
   disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const inert = disabled || loading;
+  const labelColor =
+    variant === 'primary' ? colors.onDark : variant === 'light' ? colors.brandInk : colors.ink;
 
   return (
     <Pressable
@@ -144,6 +159,7 @@ export function Button({
         styles.button,
         variant === 'primary' && styles.buttonPrimary,
         variant === 'secondary' && styles.buttonSecondary,
+        variant === 'light' && styles.buttonLight,
         variant === 'ghost' && styles.buttonGhost,
         pressed && !inert && styles.buttonPressed,
         inert && styles.buttonDisabled,
@@ -151,26 +167,67 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? colors.inkInverse : colors.ink} />
+        <ActivityIndicator color={labelColor} />
       ) : (
-        <Text
-          style={[
-            styles.buttonLabel,
-            variant === 'primary' && { color: colors.inkInverse },
-            variant !== 'primary' && { color: colors.ink },
-          ]}
-        >
-          {label}
-        </Text>
+        <Text style={[styles.buttonLabel, { color: labelColor }]}>{label}</Text>
       )}
     </Pressable>
   );
 }
 
+/**
+ * The two-option pill switcher from the design — Sign in / Create account,
+ * This week / All time.
+ */
+export function Segmented({
+  options,
+  value,
+  onChange,
+  dark = false,
+}: {
+  options: readonly string[];
+  value: string;
+  onChange: (option: string) => void;
+  /** `dark` fills the active pill with deep teal (leaderboard style). */
+  dark?: boolean;
+}) {
+  return (
+    <View style={styles.segmented}>
+      {options.map((option) => {
+        const active = option === value;
+        return (
+          <Pressable
+            key={option}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            onPress={() => {
+              if (!active) onChange(option);
+            }}
+            style={[
+              styles.segment,
+              active && (dark ? styles.segmentActiveDark : styles.segmentActive),
+            ]}
+          >
+            <Text
+              style={[
+                styles.segmentLabel,
+                active && { fontFamily: fonts.sansSemiBold },
+                active && { color: dark ? colors.onDark : colors.brandDark },
+              ]}
+            >
+              {option}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function Pill({
   children,
-  color = colors.inkFaint,
-  background = colors.surfaceAlt,
+  color = colors.inkSoft,
+  background = colors.muted,
 }: {
   children: React.ReactNode;
   color?: string;
@@ -178,7 +235,9 @@ export function Pill({
 }) {
   return (
     <View style={[styles.pill, { backgroundColor: background }]}>
-      <Text style={[type.caption as TextStyle, { color }]}>{children}</Text>
+      <Text style={[type.caption as TextStyle, { color, fontFamily: fonts.sansSemiBold }]}>
+        {children}
+      </Text>
     </View>
   );
 }
@@ -188,7 +247,7 @@ export function Pill({
 export function Loading({ label }: { label?: string }) {
   return (
     <View style={styles.centre}>
-      <ActivityIndicator color={colors.accent} />
+      <ActivityIndicator color={colors.brand} />
       {label ? (
         <>
           <Spacer h={space.md} />
@@ -216,7 +275,7 @@ export function ErrorView({
 }) {
   return (
     <View style={styles.centre}>
-      <Txt variant="heading">{title}</Txt>
+      <Txt variant="serifCard">{title}</Txt>
       {detail ? (
         <>
           <Spacer h={space.sm} />
@@ -246,7 +305,7 @@ export function EmptyState({
 }) {
   return (
     <View style={styles.centre}>
-      <Txt variant="heading">{title}</Txt>
+      <Txt variant="serifCard">{title}</Txt>
       {detail ? (
         <>
           <Spacer h={space.sm} />
@@ -276,9 +335,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     padding: space.lg,
+    ...shadow.card,
   },
 
-  divider: { height: 1, backgroundColor: colors.line },
+  divider: { height: 1, backgroundColor: colors.muted },
 
   centre: {
     flex: 1,
@@ -290,22 +350,50 @@ const styles = StyleSheet.create({
 
   button: {
     minHeight: 52,
-    borderRadius: radius.md,
+    borderRadius: radius.md + 2,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.xl,
-    borderWidth: 1,
   },
-  buttonPrimary: { backgroundColor: colors.accent, borderColor: colors.accent },
-  buttonSecondary: { backgroundColor: colors.surfaceAlt, borderColor: colors.lineStrong },
-  buttonGhost: { backgroundColor: 'transparent', borderColor: 'transparent' },
-  buttonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+  buttonPrimary: { backgroundColor: colors.brand },
+  buttonSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.lineNeutral,
+  },
+  buttonLight: { backgroundColor: colors.sheet },
+  buttonGhost: { backgroundColor: 'transparent' },
+  buttonPressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
   buttonDisabled: { opacity: 0.45 },
-  buttonLabel: { fontSize: 16, fontWeight: '700' },
+  buttonLabel: { fontFamily: fonts.sansSemiBold, fontSize: 15 },
+
+  segmented: {
+    flexDirection: 'row',
+    gap: space.sm,
+    backgroundColor: colors.muted,
+    borderRadius: radius.md,
+    padding: 4,
+  },
+  segment: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 9,
+    borderRadius: radius.sm,
+  },
+  segmentActive: {
+    backgroundColor: colors.surface,
+    shadowColor: '#081826',
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  segmentActiveDark: { backgroundColor: colors.brandDark },
+  segmentLabel: { fontFamily: fonts.sansMedium, fontSize: 13.5, color: colors.inkSoft },
 
   pill: {
-    paddingHorizontal: space.sm,
-    paddingVertical: 3,
+    paddingHorizontal: space.sm + 2,
+    paddingVertical: 4,
     borderRadius: radius.pill,
   },
 });

@@ -1,4 +1,19 @@
+import {
+  InterTight_400Regular,
+  InterTight_500Medium,
+  InterTight_600SemiBold,
+  InterTight_700Bold,
+} from '@expo-google-fonts/inter-tight';
+import {
+  JetBrainsMono_400Regular,
+  JetBrainsMono_500Medium,
+} from '@expo-google-fonts/jetbrains-mono';
+import {
+  Newsreader_400Regular_Italic,
+  Newsreader_500Medium,
+} from '@expo-google-fonts/newsreader';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -63,7 +78,7 @@ function SetupRequired() {
           <Txt variant="mono">mobile/</Txt> folder with your Supabase project details:
         </Txt>
         <Spacer h={space.lg} />
-        <Txt variant="mono" tone="accent">
+        <Txt variant="mono" tone="brand">
           EXPO_PUBLIC_SUPABASE_URL=...{'\n'}
           EXPO_PUBLIC_SUPABASE_ANON_KEY=...
         </Txt>
@@ -86,10 +101,25 @@ function SetupRequired() {
 }
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    Newsreader_500Medium,
+    Newsreader_400Regular_Italic,
+    InterTight_400Regular,
+    InterTight_500Medium,
+    InterTight_600SemiBold,
+    InterTight_700Bold,
+    JetBrainsMono_400Regular,
+    JetBrainsMono_500Medium,
+  });
+
+  // The splash screen stays up until fonts resolve — a flash of fallback
+  // type would undo the whole identity.
+  if (!fontsLoaded) return null;
+
   if (!isSupabaseConfigured) {
     return (
       <SafeAreaProvider>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <SetupRequired />
       </SafeAreaProvider>
     );
@@ -100,7 +130,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <StatusBar style="light" />
+            <StatusBar style="dark" />
             <AuthGate>
               <Stack
                 screenOptions={{
@@ -111,20 +141,13 @@ export default function RootLayout() {
               >
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="(auth)/sign-in" />
+                {/* No swipe-back mid-quiz: leaving is an explicit choice with a
+                    confirm, not something an edge gesture should do. */}
                 <Stack.Screen
                   name="quiz/[sessionId]"
                   options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
                 />
                 <Stack.Screen name="quiz/results" options={{ gestureEnabled: false }} />
-                <Stack.Screen name="arcade/index" />
-                {/* No swipe-back mid-run: a run has stakes, and losing one to
-                    an accidental edge gesture is the worst way to lose it. */}
-                <Stack.Screen
-                  name="arcade/[mode]"
-                  options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
-                />
-                <Stack.Screen name="arcade/results" options={{ gestureEnabled: false }} />
-                <Stack.Screen name="arcade/ludo" options={{ animation: 'slide_from_bottom' }} />
               </Stack>
             </AuthGate>
           </AuthProvider>

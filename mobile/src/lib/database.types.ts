@@ -27,7 +27,6 @@ export type QuizMode =
   | 'rapid_fire'
   | 'daily_challenge'
   | 'weak_spots';
-export type LeagueTier = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
 export type ReportReason =
   | 'wrong_answer'
   | 'unclear'
@@ -96,24 +95,9 @@ export interface Profile {
   is_staff: boolean;
 }
 
-export interface Achievement {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  icon: string | null;
-  xp_reward: number;
-  sort_order: number;
-}
-
 /**
- * A question ready to be played, with its options.
- *
- * Both lanes produce this shape and hand it to the same renderer, but they
- * build it differently: Focus assembles it client-side from one embedded
- * select at session start, Arcade receives it from next_question() one at a
- * time. Keeping the shape identical is what lets a Parsons problem drop into
- * a Survival run later without touching either player.
+ * A question ready to be played, with its options. Assembled client-side from
+ * one embedded select at session start.
  */
 export interface PlayableOption {
   id: string;
@@ -147,7 +131,10 @@ export interface AnswerResponse {
   payload?: Record<string, unknown> | null;
 }
 
-/** Run state carried by an arcade session. Null for a Focus quiz. */
+/**
+ * Legacy run state returned by the server functions. Always null for the quiz
+ * modes this app starts; kept so the return shapes below stay honest.
+ */
 export interface RunState {
   slug?: string;
   run?: number;
@@ -187,29 +174,3 @@ export interface FinishSessionResult {
   run: RunSummary | null;
 }
 
-/**
- * Mode parameters. Readable by the client so it can draw the ladder and size
- * the clock — never trusted for anything. The server re-reads the same row
- * when it applies the rules, so editing these on the device changes what is
- * drawn and nothing about what is scored.
- */
-export interface GameModeRules {
-  rungs?: number[];
-  lives?: number;
-  duration_s?: number;
-  defer_xp?: boolean;
-}
-
-/** A row from public.game_modes. */
-export interface GameMode {
-  id: string;
-  slug: string;
-  name: string;
-  tagline: string;
-  lane: 'focus' | 'arcade';
-  rules: GameModeRules;
-  accent_hex: string;
-  icon: string | null;
-  min_level: number;
-  sort_order: number;
-}
